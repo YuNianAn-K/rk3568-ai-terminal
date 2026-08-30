@@ -1,0 +1,17 @@
+{
+    "parameterSets": {
+        "design default values": {
+            "base": "2",
+            "base_h": "12",
+            "board_x": "180.2",
+            "board_y": "140.2",
+            "clearance": "1",
+            "corner": "15",
+            "corner_r": "3",
+            "top_strip": "11",
+            "wall": "2",
+            "wall_h": "43"
+        }
+    },
+    "fileFormatVersion": "1"
+}

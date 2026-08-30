@@ -1,0 +1,22 @@
+* text=auto
+
+# Files executed or built in Linux/Buildroot/Qt environments
+*.sh text eol=lf
+*.py text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.qml text eol=lf
+*.pro text eol=lf
+*.pri text eol=lf
+*.qrc text eol=lf
+*.svg text eol=lf
+*.scad text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+S[0-9][0-9]* text eol=lf
+
+# Binary assets and printable models
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.stl binary

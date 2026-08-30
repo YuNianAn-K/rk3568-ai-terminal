@@ -1,0 +1,9 @@
+diff --git a/ui/ui/src/ATK-DLRK3568/apk2.cfg b/ui/ui/src/ATK-DLRK3568/apk2.cfg
+index 5f59b77..7b89b5e 100644
+--- a/ui/ui/src/ATK-DLRK3568/apk2.cfg
++++ b/ui/ui/src/ATK-DLRK3568/apk2.cfg
+@@ -4,3 +4,4 @@ appicons/recorder.png 语音备忘录 recorder
+ appicons/udpchat.png 信息 udpchat
+ appicons/weather.png 天气 weather
+ appicons/reminders.png 提醒事项 reminders
++appicons/aivoice.png AI语音 aivoice

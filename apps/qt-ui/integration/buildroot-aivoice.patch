@@ -1,0 +1,18 @@
+diff --git a/package/alientek/qt_demo/systemui/systemui.mk b/package/alientek/qt_demo/systemui/systemui.mk
+--- a/package/alientek/qt_demo/systemui/systemui.mk
++++ b/package/alientek/qt_demo/systemui/systemui.mk
+@@ -34,6 +34,7 @@ define SYSTEMUI_CONFIGURE_CMDS
+         cd $(@D)/reminders; $(TARGET_MAKE_ENV) $(HOST_DIR)/bin/qmake
+         cd $(@D)/pcba; $(TARGET_MAKE_ENV) $(HOST_DIR)/bin/qmake
+         cd $(@D)/sysvolume; $(TARGET_MAKE_ENV) $(HOST_DIR)/bin/qmake
++        cd $(@D)/aivoice; $(TARGET_MAKE_ENV) $(HOST_DIR)/bin/qmake
+ endef
+ 
+ define SYSTEMUI_BUILD_CMDS
+@@ -60,5 +61,6 @@ define SYSTEMUI_BUILD_CMDS
+         $(TARGET_MAKE_ENV) $(MAKE) -C $(@D)/reminders
+         $(TARGET_MAKE_ENV) $(MAKE) -C $(@D)/pcba
+         $(TARGET_MAKE_ENV) $(MAKE) -C $(@D)/sysvolume
++        $(TARGET_MAKE_ENV) $(MAKE) -C $(@D)/aivoice
+ endef
+ SYSTEMUI_INSTALL_TARGET_DIR = $(TARGET_DIR)/opt/

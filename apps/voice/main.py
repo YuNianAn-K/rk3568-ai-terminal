@@ -1,0 +1,772 @@
+#!/usr/bin/env python3
+"""
+AI Voice Terminal - Main Application
+RK3568 AI Voice Terminal with voice dialogue support
+"""
+import sys
+import os
+import signal
+import threading
+import subprocess
+import tempfile
+import select
+import termios
+import tty
+import time
+import queue
+import unicodedata
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from config import HIGH_PASS_ENABLE, HIGH_PASS_CUTOFF
+from llm import create_llm
+from tts.tts import TTSEngine
+from audio.play import AudioPlayer
+from audio.record import AudioRecorder
+from asr.baidu_asr import BaiduASR
+from tools import get_tools_schema, execute_tool, get_local_response
+
+
+class SentenceAccumulator:
+    """Accumulate LLM tokens and split into sentences for streaming TTS."""
+    SENTENCE_ENDINGS = set('。！？；\n')
+    SOFT_BOUNDARY = '，,、'
+
+    def __init__(self, max_len=80):
+        self.buffer = ""
+        self.max_len = max_len
+
+    def feed(self, token: str) -> list:
+        """Feed a token, return list of complete sentences ready for TTS."""
+        self.buffer += token
+        sentences = []
+        while self.buffer:
+            # Find earliest sentence ending
+            end_pos = -1
+            for i, ch in enumerate(self.buffer):
+                if ch in self.SENTENCE_ENDINGS:
+                    end_pos = i
+                    break
+            if end_pos >= 0:
+                sentence = self.buffer[:end_pos + 1].strip()
+                self.buffer = self.buffer[end_pos + 1:]
+                if sentence:
+                    sentences.append(sentence)
+            elif len(self.buffer) >= self.max_len:
+                # Force split at soft boundary or just cut
+                cut = self._find_soft_split(self.buffer)
+                sentence = self.buffer[:cut].strip()
+                self.buffer = self.buffer[cut:]
+                if sentence:
+                    sentences.append(sentence)
+            else:
+                break
+        return sentences
+
+    def flush(self) -> str:
+        """Return remaining buffer (called when stream ends)."""
+        remaining = self.buffer.strip()
+        self.buffer = ""
+        return remaining
+
+    def _find_soft_split(self, text: str) -> int:
+        """Find best split point at soft boundary, fallback to max_len."""
+        best = -1
+        for i, ch in enumerate(text):
+            if ch in self.SOFT_BOUNDARY and i > len(text) // 3:
+                best = i + 1
+        return best if best > 0 else min(self.max_len, len(text))
+
+
+class AIVoiceTerminal:
+    TIME_TOOL_HINTS = (
+        "几点", "几号", "星期几", "周几", "当前时间", "现在时间",
+        "当前日期", "今天日期", "今天是几", "现在是几",
+    )
+    WEATHER_TOOL_HINTS = (
+        "天气", "气温", "温度", "下雨", "下雪", "湿度", "风速",
+        "晴天", "天晴", "空气质量",
+    )
+
+
+    def __init__(self, event_callback=None):
+        self.event_callback = event_callback
+        print("Initializing AI Voice Terminal...")
+        self.llm = create_llm()
+        self.tts = TTSEngine()
+        self.player = AudioPlayer()
+        self.recorder = AudioRecorder()
+        self.asr = BaiduASR()
+        self.history = []
+        self.max_response_chars = 500
+        self.high_pass = HIGH_PASS_ENABLE
+        self.noise_rms = self._measure_noise()
+
+        # Check wake word availability
+        self.wake_detector = None
+        try:
+            from wake.porcupine import WakeWordDetector
+            self.wake_detector = WakeWordDetector()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Wake word disabled: {e}")
+
+        print(f"Microphone: {'available' if self.recorder.has_mic else 'not detected (text mode)'}")
+        print(f"Wake word: {'available' if self.wake_detector and self.wake_detector.available else 'disabled'}")
+        print("Initialization complete!\n")
+
+    def _emit_event(self, event_type: str, **payload) -> None:
+        """Send a structured, credential-free event to an optional UI adapter."""
+        if not self.event_callback:
+            return
+        try:
+            self.event_callback(event_type, payload)
+        except Exception as e:
+            print(f"Event callback failed: {type(e).__name__}")
+
+    def _emit_timing(self, stage: str) -> None:
+        """Emit a monotonic stage marker for the headless service."""
+        self._emit_event(
+            "timing",
+            stage=stage,
+            monotonic_ms=int(time.monotonic() * 1000),
+            wall_ms=int(time.time() * 1000),
+        )
+
+    def process_input(self, user_input: str):
+        """Process user input with streaming TTS pipeline"""
+        if not user_input or not user_input.strip():
+            return
+
+        print(f"\nYou: {user_input}")
+
+        local_response = get_local_response(user_input)
+        if local_response:
+            print("Route: local fast response", flush=True)
+            self._emit_timing("local_response")
+            self._speak_blocking(local_response, user_input)
+            return
+
+        # Only explicit tool intents use the slower non-streaming function-call
+        # path. Ordinary conversation must stay on the streaming fast path.
+        tools_schema = get_tools_schema()
+        if tools_schema and self._requires_tools(user_input):
+            print("Route: tool-capable blocking", flush=True)
+            self._emit_event("state", state="thinking", message="正在生成回答")
+            self._emit_timing("llm_request")
+            response = self._call_tools_with_retry(user_input, tools_schema)
+            if self._is_api_failure(response):
+                print(f"AI request failed: {response}")
+                self._emit_event("error", message="AI 请求失败，请重试")
+                return
+            self._emit_timing("llm_first_token")
+            self._emit_timing("llm_end")
+            self._speak_blocking(response, user_input)
+            return
+
+        # Try streaming pipeline
+        print("Route: streaming chat", flush=True)
+        try:
+            self._process_input_streaming(user_input)
+        except Exception as e:
+            print(f"Streaming failed ({e}), falling back to blocking")
+            self._process_input_blocking(user_input)
+
+    def _process_input_streaming(self, user_input: str):
+        """Streaming pipeline: token -> sentence -> queue -> TTS+play thread"""
+        sentence_q = queue.Queue()
+        full_response = []
+        stream_timing = {
+            "tts_request": False,
+            "tts_ready": False,
+            "playback_start": False,
+        }
+
+        playback_errors = []
+        # Consumer thread: take sentences from queue, TTS + play
+        def consumer():
+            idx = 0
+            while True:
+                item = sentence_q.get()
+                if item is None:  # Sentinel: stream ended
+                    break
+                speech_item = self._sanitize_tts_text(item)
+                if not speech_item:
+                    continue
+                idx += 1
+                audio_file = f"/tmp/tts_stream_{idx}.wav"
+                try:
+                    if not stream_timing["tts_request"]:
+                        stream_timing["tts_request"] = True
+                        self._emit_timing("tts_request")
+                        self._emit_event("state", state="replying", message="正在合成语音")
+                    if self.tts.text_to_speech(speech_item, audio_file):
+                        if not stream_timing["tts_ready"]:
+                            stream_timing["tts_ready"] = True
+                            self._emit_timing("tts_ready")
+                        if not stream_timing["playback_start"]:
+                            stream_timing["playback_start"] = True
+                            self._emit_timing("playback_start")
+                            self._emit_event("state", state="playing", message="正在播放回答")
+                        if not self.player.play(audio_file):
+                            playback_errors.append("音频播放失败")
+                        time.sleep(0.1)
+                    else:
+                        playback_errors.append("语音合成失败")
+                except Exception as e:
+                    playback_errors.append(type(e).__name__)
+                finally:
+                    self._safe_unlink(audio_file)
+
+        t = threading.Thread(target=consumer, daemon=True)
+        t.start()
+
+        # Producer: stream tokens from LLM, accumulate into sentences
+        print("Thinking...", end=" ", flush=True)
+        self._emit_event("state", state="thinking", message="正在生成回答")
+        self._emit_timing("llm_request")
+        accum = SentenceAccumulator()
+        first_token_seen = False
+        try:
+            for token in self.llm.chat_stream(user_input, self.history):
+                if not isinstance(token, str) or not token:
+                    continue
+                if not first_token_seen and self._is_api_failure(token):
+                    raise RuntimeError(token)
+                if not first_token_seen:
+                    first_token_seen = True
+                    self._emit_timing("llm_first_token")
+                full_response.append(token)
+                print(token, end="", flush=True)
+                self._emit_event("answer_delta", text=token)
+                sentences = accum.feed(token)
+                for s in sentences:
+                    sentence_q.put(s)
+
+            # Flush remaining buffer
+            remaining = accum.flush()
+            if remaining:
+                sentence_q.put(remaining)
+            self._emit_timing("llm_end")
+        finally:
+            sentence_q.put(None)  # Signal consumer to stop
+            t.join()
+
+        self._emit_timing("reply_end")
+
+        print()  # Newline after streaming tokens
+
+        response = "".join(full_response)
+
+        if playback_errors:
+            self._emit_event("error", message="；".join(dict.fromkeys(playback_errors)))
+        if self._is_api_failure(response):
+            raise RuntimeError(response)
+        if len(response) > self.max_response_chars:
+            response = response[:self.max_response_chars] + "..."
+        self._emit_event("answer", text=response)
+
+        # Update history
+        self.history.append({"role": "user", "content": user_input})
+        self.history.append({"role": "assistant", "content": response})
+        if len(self.history) > 8:
+            self.history = self.history[-8:]
+
+    def _process_input_blocking(self, user_input: str):
+        """Blocking fallback: generate full response, then TTS + play"""
+        print("Thinking...", end=" ", flush=True)
+        self._emit_event("state", state="thinking", message="正在生成回答")
+        self._emit_timing("llm_request")
+        response = self._call_llm_with_retry(user_input)
+        if not self._is_api_failure(response):
+            self._emit_timing("llm_first_token")
+            self._emit_timing("llm_end")
+        print("done")
+        self._speak_blocking(response, user_input)
+
+    def _speak_blocking(self, response: str, user_input: str = ""):
+        """TTS + play a complete response string"""
+        if len(response) > self.max_response_chars:
+            response = response[:self.max_response_chars] + "..."
+
+        print(f"\nAI: {response}")
+        self._emit_event("answer", text=response)
+        self._emit_event("state", state="replying", message="正在合成语音")
+
+        if user_input:
+            self.history.append({"role": "user", "content": user_input})
+        self.history.append({"role": "assistant", "content": response})
+        if len(self.history) > 8:
+            self.history = self.history[-8:]
+
+        print("Synthesizing speech...", end=" ", flush=True)
+        self._emit_timing("tts_request")
+        speech_text = self._sanitize_tts_text(response)
+        audio_file = self.tts.text_to_speech(speech_text)
+
+        if audio_file:
+            try:
+                self._emit_timing("tts_ready")
+                fsize = os.path.getsize(audio_file) if os.path.exists(audio_file) else 0
+                print(f"done ({fsize} bytes)")
+                self._emit_event("state", state="playing", message="正在播放回答")
+                self._emit_timing("playback_start")
+                self.player.play(audio_file)
+                time.sleep(0.5)
+                self._emit_timing("reply_end")
+            finally:
+                self._safe_unlink(audio_file)
+        else:
+            print("TTS FAILED - no audio file generated")
+            print("Text response shown above")
+            self._emit_timing("reply_end")
+            self._emit_event("error", message="语音合成失败，已显示文字回答")
+
+    def _call_llm_with_retry(self, user_input: str, retries: int = 3) -> str:
+        """Call MiMo with exponential backoff retry"""
+        for attempt in range(retries):
+            try:
+                response = self.llm.chat(user_input, self.history)
+            except Exception as e:
+                response = f"API调用失败: {type(e).__name__}"
+            if not self._is_api_failure(response):
+                return response
+            if attempt < retries - 1:
+                wait = 2 ** attempt
+                print(f"retry in {wait}s...", end=" ", flush=True)
+                time.sleep(wait)
+        return response
+
+    def _call_tools_with_retry(self, user_input: str, tools_schema: list,
+                               retries: int = 3) -> str:
+        """Call the tool-capable LLM path with bounded retries."""
+        response = "API调用失败: no response"
+        for attempt in range(retries):
+            try:
+                response = self.llm.chat_with_tools(
+                    user_input, self.history,
+                    tools_schema=tools_schema,
+                    tool_executor=execute_tool,
+                )
+            except Exception as e:
+                response = f"API调用失败: {type(e).__name__}"
+            if not self._is_api_failure(response):
+                return response
+            if attempt < retries - 1:
+                wait = 2 ** attempt
+                print(f"retry in {wait}s...", end=" ", flush=True)
+                time.sleep(wait)
+        return response
+
+    @staticmethod
+    def _is_api_failure(response) -> bool:
+        return (not isinstance(response, str) or not response.strip() or
+                response.startswith("API调用失败") or
+                response.startswith("API响应格式错误"))
+
+    def _record_audio(self):
+        """Start recording audio"""
+        return self.recorder.record_async()
+
+
+    @classmethod
+    def _requires_tools(cls, user_input: str) -> bool:
+        """Conservatively route only supported time/weather intents to tools."""
+        normalized = "".join(str(user_input).lower().split())
+        hints = cls.TIME_TOOL_HINTS + cls.WEATHER_TOOL_HINTS
+        return any(hint in normalized for hint in hints)
+
+    def _process_audio(self, audio_file: str):
+        """Process recorded audio: quality gate -> (highpass) -> ASR -> LLM -> TTS"""
+        source_file = audio_file
+        processed_file = audio_file
+        try:
+            if not os.path.exists(audio_file) or os.path.getsize(audio_file) <= 44:
+                print("Recording failed or too short")
+                self._emit_event("error", message="录音失败或时间太短")
+                return
+
+            # Quality gate: reject too-quiet / clipped recordings so ASR never sees garbage
+            rms = self._audio_rms(audio_file)
+            min_rms = max(200, (self.noise_rms or 150.0) * 1.5)
+            if rms < min_rms:
+                print(f"Audio rms={rms:.0f} < {min_rms:.0f} - 声音太轻/没听清，请靠近麦克风再说一遍")
+                self._emit_event("error", message="声音太轻或没有听清，请靠近麦克风重试")
+                return
+            if rms > 8000:
+                print(f"Audio rms={rms:.0f} - 录音异常（可能爆音），请重说")
+                self._emit_event("error", message="录音音量异常，请重新说一遍")
+                return
+            print(f"Audio rms={rms:.0f}, quality OK", flush=True)
+
+            if self.high_pass:
+                processed_file = self._highpass(audio_file)
+
+            self._emit_event("state", state="recognizing", message="正在识别语音")
+            print(f"Recognizing... ({os.path.getsize(processed_file)} bytes)", end=" ", flush=True)
+            self._emit_timing("asr_request")
+            text = self.asr.recognize(processed_file)
+            self._emit_timing("asr_result")
+            print(f"done -> [{text}]")
+
+            if text:
+                self._emit_event("transcript", text=text)
+                self.process_input(text)
+            else:
+                print("Could not understand, try again")
+                self._emit_event("error", message="没有识别到有效语音，请重试")
+        except Exception as e:
+            print(f"Voice round failed: {type(e).__name__}: {e}")
+            self._emit_event("error", message=f"本轮处理失败：{type(e).__name__}")
+        finally:
+            self._safe_unlink(source_file)
+            if processed_file != source_file:
+                self._safe_unlink(processed_file)
+
+    @staticmethod
+    def _sanitize_tts_text(text: str) -> str:
+        """Remove control/symbol characters that cloud TTS cannot speak."""
+        cleaned = "".join(
+            ch for ch in str(text)
+            if not unicodedata.category(ch).startswith(("C", "S"))
+        )
+        return cleaned.strip()
+
+    @staticmethod
+    def _safe_unlink(path: str) -> None:
+        if not path:
+            return
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+        except OSError as e:
+            print(f"Temp file cleanup failed: {type(e).__name__}")
+
+    @staticmethod
+    def _audio_is_constant(path: str, tol: int = 8) -> bool:
+        """Detect codec DC lockup: every PCM sample identical (post-playback bug)."""
+        try:
+            import array
+            with open(path, "rb") as f:
+                data = f.read()
+            pcm = data[44:]
+            samples = array.array("h")
+            samples.frombytes(pcm[: len(pcm) // 2 * 2])
+            if len(samples) < 100:
+                return False
+            return max(samples) - min(samples) <= tol
+        except Exception:
+            return False
+
+    def _audio_rms(self, path: str) -> float:
+        """Read WAV and compute PCM RMS."""
+        import array, math
+        with open(path, "rb") as f:
+            data = f.read()
+        pcm = data[44:]
+        samples = array.array("h")
+        samples.frombytes(pcm[: len(pcm) // 2 * 2])
+        if not samples:
+            return 0.0
+        return math.sqrt(sum(x * x for x in samples) / len(samples))
+
+    @staticmethod
+    def _write_wav(path: str, samples, sr: int = 16000) -> None:
+        """Write int16 samples as a standard WAV file."""
+        import struct
+        data = samples.tobytes()
+        data_size = len(data)
+        with open(path, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE")
+            f.write(b"fmt " + struct.pack("<I", 16))
+            f.write(struct.pack("<H", 1))
+            f.write(struct.pack("<H", 1))
+            f.write(struct.pack("<I", sr))
+            f.write(struct.pack("<I", sr * 2))
+            f.write(struct.pack("<H", 2))
+            f.write(struct.pack("<H", 16))
+            f.write(b"data" + struct.pack("<I", data_size))
+            f.write(data)
+
+    def _highpass(self, path: str) -> str:
+        """FFT highpass to cut low-frequency fan vibration; fallback to original if numpy missing."""
+        try:
+            import numpy as np
+            with open(path, "rb") as f:
+                data = f.read()
+            samples = np.frombuffer(data[44:], dtype=np.int16)
+            n = len(samples)
+            if n < 1024:
+                return path
+            spec = np.fft.rfft(samples.astype(np.float64))
+            freqs = np.fft.rfftfreq(n, 1.0 / 16000)
+            spec[freqs < HIGH_PASS_CUTOFF] = 0
+            y = np.clip(np.fft.irfft(spec, n), -32768, 32767).astype(np.int16)
+            out_path = path + ".hp.wav"
+            self._write_wav(out_path, y)
+            return out_path
+        except Exception as e:
+            print(f"Highpass skipped: {e}")
+            return path
+
+    def _measure_noise(self, seconds: float = 1.0) -> float:
+        """Sample ambient noise RMS to adaptively set the recording quality gate.
+        Skips samples pinned to DC (codec lockup) which would inflate the gate."""
+        if not self.recorder.has_mic:
+            return 0.0
+        for _ in range(2):
+            path = tempfile.mktemp(suffix=".wav")
+            try:
+                proc = subprocess.Popen(
+                    ["arecord", "-D", "plughw:0,0", "-f", "S16_LE", "-r", "16000",
+                     "-c", "1", "-t", "wav", "-d", str(int(seconds)), path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                proc.wait(timeout=seconds + 4)
+                if os.path.exists(path) and os.path.getsize(path) > 44:
+                    if self._audio_is_constant(path):
+                        print("Env noise baseline: constant sample, retry")
+                        continue
+                    rms = self._audio_rms(path)
+                    print(f"Env noise baseline: rms={rms:.0f}")
+                    return rms
+            finally:
+                if os.path.exists(path):
+                    os.unlink(path)
+        return 0.0
+
+    def _start_recording(self, release_delay: float = 0.3) -> bool:
+        """Start arecord and verify that the child did not fail immediately."""
+        if self._recording:
+            return False
+        time.sleep(release_delay)
+        try:
+            proc, audio_file = self._record_audio()
+        except Exception as e:
+            print(f"Recording start failed: {type(e).__name__}: {e}")
+            self._emit_event("error", message="麦克风启动失败")
+            return False
+
+        time.sleep(0.05)
+        if proc.poll() is not None:
+            proc.wait()
+            detail = self._read_process_stderr(proc)
+            print(f"Recording start failed: arecord exited with {proc.returncode}: {detail}")
+            self._safe_unlink(audio_file)
+            self._emit_event("error", message="麦克风无法打开，请检查设备占用")
+            return False
+
+        self._record_proc = proc
+        self._audio_file = audio_file
+        self._recording = True
+        print("\n[Recording] Press Enter to stop...")
+        self._emit_event("state", state="recording", message="正在聆听")
+        self._emit_timing("record_start")
+        return True
+
+    def _finish_recording(self, automatic: bool = False) -> None:
+        """Stop/finalize arecord, recover codec lockups, then process the WAV."""
+        proc = self._record_proc
+        audio_file = self._audio_file
+        self._recording = False
+        self._record_proc = None
+        self._audio_file = None
+
+        if not proc or not audio_file:
+            return
+
+        terminated_by_us = False
+        try:
+            if proc.poll() is None:
+                terminated_by_us = True
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=2)
+            else:
+                proc.wait()
+
+            if proc.returncode != 0 and not terminated_by_us:
+                detail = self._read_process_stderr(proc)
+                print(f"arecord exited with {proc.returncode}: {detail}")
+
+            self._emit_timing("record_end")
+
+            if automatic:
+                print("\n[Recording limit reached] Processing captured audio...")
+
+            if self._audio_is_constant(audio_file):
+                self._safe_unlink(audio_file)
+                print("\n[Mic locked] 检测到麦克风异常，自动重新录音，请再说一遍")
+                self._emit_event("error", message="麦克风状态异常，正在自动恢复")
+                self._retry_count += 1
+                if self._retry_count >= 2:
+                    self._retry_count = 0
+                    print("连续两次异常，请检查麦克风连接")
+                elif self._start_recording(release_delay=0.5):
+                    print("[Recovery recording started]")
+                return
+
+            self._retry_count = 0
+            self._process_audio(audio_file)
+        except Exception as e:
+            self._safe_unlink(audio_file)
+            print(f"Recording finalize failed: {type(e).__name__}: {e}")
+            self._emit_event("error", message="录音结束处理失败")
+
+    def _discard_active_recording(self) -> None:
+        """Best-effort cleanup used during shutdown."""
+        proc = self._record_proc
+        audio_file = self._audio_file
+        self._recording = False
+        self._record_proc = None
+        self._audio_file = None
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+        self._safe_unlink(audio_file)
+
+    @staticmethod
+    def _read_process_stderr(proc) -> str:
+        try:
+            if not proc or not proc.stderr:
+                return "no stderr"
+            data = proc.stderr.read()
+            if isinstance(data, bytes):
+                data = data.decode(errors="replace")
+            lines = [line.strip() for line in data.splitlines() if line.strip()]
+            return lines[-1][:300] if lines else "no stderr"
+        except Exception:
+            return "stderr unavailable"
+
+    @staticmethod
+    def _drain_buffered_input() -> None:
+        """Discard keys pressed while a voice round was busy."""
+        try:
+            while select.select([sys.stdin], [], [], 0)[0]:
+                sys.stdin.read(1)
+        except Exception:
+            pass
+
+    def _voice_mode(self):
+        """Voice mode: press Enter to start, press Enter again to stop."""
+        if not sys.stdin.isatty():
+            print("Push-to-talk requires an interactive TTY; no input source available")
+            return
+
+        self._recording = False
+        self._record_proc = None
+        self._audio_file = None
+        self._retry_count = 0
+        last_key_time = 0.0
+
+        print("=" * 50)
+        print("AI Voice Terminal - Push-to-Talk")
+        print("Press Enter to START recording")
+        print("Press Enter again to STOP and process")
+        print("Ctrl+C to exit")
+        print("=" * 50)
+
+        old_settings = termios.tcgetattr(sys.stdin)
+        try:
+            tty.setcbreak(sys.stdin.fileno())
+            while True:
+                # arecord exits by itself at RECORD_MAX_SECONDS. Finalize it
+                # immediately instead of waiting forever for another key.
+                if (self._recording and self._record_proc and
+                        self._record_proc.poll() is not None):
+                    self._finish_recording(automatic=True)
+                    if not self._recording:
+                        self._drain_buffered_input()
+                        print("\nReady. Press Enter to talk.")
+                    continue
+
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch in ("\r", "\n"):
+                        now = time.monotonic()
+                        if now - last_key_time < 0.08:
+                            continue
+                        last_key_time = now
+
+                        if not self._recording:
+                            if not self._start_recording():
+                                print("\nReady. Press Enter to talk.")
+                        else:
+                            self._finish_recording()
+                            if not self._recording:
+                                self._drain_buffered_input()
+                                print("\nReady. Press Enter to talk.")
+                else:
+                    time.sleep(0.02)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._discard_active_recording()
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+    def _text_mode(self):
+        """Text input mode - fallback when no microphone"""
+        print("=" * 50)
+        print("AI Voice Terminal - Text Mode")
+        print("Type your message and press Enter.")
+        print("Type 'quit' to exit.")
+        print("=" * 50)
+
+        while True:
+            try:
+                user_input = input("\nYou: ").strip()
+                if not user_input:
+                    continue
+                if user_input.lower() in ['quit', 'exit', 'q']:
+                    print("\nGoodbye!")
+                    break
+                self.process_input(user_input)
+            except KeyboardInterrupt:
+                print("\n\nGoodbye!")
+                break
+            except EOFError:
+                print("\n\nGoodbye!")
+                break
+
+    def run(self):
+        """Run the terminal - voice or text mode"""
+        if self.recorder.has_mic:
+            self._voice_mode()
+        else:
+            self._text_mode()
+
+
+def main():
+    """Main entry point"""
+    if not sys.stdin.isatty():
+        print("Push-to-talk requires an interactive TTY; startup aborted")
+        sys.exit(2)
+
+    def signal_handler(sig, frame):
+        print("\n\nGoodbye!")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        terminal = AIVoiceTerminal()
+        terminal.run()
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

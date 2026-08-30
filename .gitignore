@@ -1,0 +1,35 @@
+# Local credentials and machine-specific files
+.env
+.env.*
+!.env.example
+apps/voice/config/config.py
+local/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Qt, C and C++ build output
+build/
+Debug/
+Release/
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.new
+platform/qt-system/build-output/
+
+# Generated temporary files
+*.tmp
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
