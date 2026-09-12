@@ -1,4 +1,6 @@
-# AI Voice Terminal - 语音对话实现计划
+# AI Voice Terminal - 语音对话实现计划（历史归档）
+
+> **已废弃：** 本文记录 2026-08-22 的百度 ASR/火山 TTS 方案，仅保留项目历史；不得作为当前部署、配置或凭据操作依据。当前实现和验证流程见 `../../mimo-migration.md`。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

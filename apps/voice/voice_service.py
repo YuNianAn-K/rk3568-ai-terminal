@@ -440,7 +440,11 @@ class VoiceService:
             return
         self.stop_event.set()
         if self.terminal:
-            self.terminal._discard_active_recording()
+            close = getattr(self.terminal, "close", None)
+            if close:
+                close()
+            else:
+                self.terminal._discard_active_recording()
         if self.server_socket:
             try:
                 self.server_socket.close()

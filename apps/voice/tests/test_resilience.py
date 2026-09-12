@@ -10,7 +10,6 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from asr.baidu_asr import BaiduASR
 from audio.play import AudioPlayer
 from llm.glm import GLMLLM
 from llm.mimo import MiMoLLM
@@ -33,29 +32,21 @@ class FakeStreamResponse:
 
 
 class VoiceResilienceTests(unittest.TestCase):
-    def test_asr_token_timeout_returns_empty(self):
-        fd, path = tempfile.mkstemp(suffix=".wav")
-        try:
-            os.write(fd, b"0" * 44)
-            os.close(fd)
-            asr = BaiduASR(api_key="dummy", secret_key="dummy")
-            with mock.patch(
-                "asr.baidu_asr.requests.post",
-                side_effect=__import__("requests").exceptions.Timeout("synthetic"),
-            ):
-                self.assertEqual(asr.recognize(path, retries=1), "")
-        finally:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            if os.path.exists(path):
-                os.unlink(path)
-
     def test_stream_adapters_filter_none_chunks(self):
         for adapter_class in (MiMoLLM, GLMLLM):
             with self.subTest(adapter=adapter_class.__name__):
                 adapter = adapter_class()
+                if adapter_class is MiMoLLM:
+                    events = [
+                        {"choices": [{"delta": {"content": None}}]},
+                        {"choices": [{"delta": {"content": "你"}}]},
+                        {"choices": [{"delta": {"content": "好"}}]},
+                        {"_done": True},
+                    ]
+                    with mock.patch.object(adapter.http, "responses", side_effect=lambda *a, **k: (e for e in events)):
+                        self.assertEqual(list(adapter.chat_stream("test", [])), ["你", "好"])
+                    adapter.close()
+                    continue
                 with mock.patch(
                     f"{adapter_class.__module__}.requests.post",
                     return_value=FakeStreamResponse(),

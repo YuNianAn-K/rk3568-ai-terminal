@@ -1,6 +1,6 @@
 # RK3568 AI 语音服务
 
-本目录是 RK3568 AI 终端的 Python 语音子项目。当前实现以板载麦克风和扬声器为入口，完成录音、百度 ASR、MiMo/GLM 适配、工具调用、流式回答、火山 TTS 与 ALSA 播放，并通过本地 Socket 为 Qt 应用提供状态和控制。
+本目录是 RK3568 AI 终端的 Python 语音子项目。默认链路为录音、MiMo ASR、MiMo 对话、MiMo TTS 与 ALSA 播放，并通过本地 Socket 为 Qt 应用提供状态和控制。
 
 ## 目录结构
 
@@ -8,11 +8,11 @@
 apps/voice/
 ├── main.py              # 语音链路与直接运行入口
 ├── voice_service.py     # Qt 后台服务，监听 /tmp/ai-voice.sock
-├── asr/                 # 百度语音识别
+├── asr/                 # MiMo ASR 适配器
 ├── audio/               # ALSA 录音、播放和音频保护
 ├── llm/                 # MiMo/GLM 适配与流式接口
 ├── tools/               # 时间、天气等受控工具调用
-├── tts/                 # 语音合成
+├── tts/                 # MiMo 流式 TTS 与可选本地/通用 TTS
 ├── wake/                # 唤醒词实验入口
 ├── scripts/             # Buildroot 启动、检查与调试脚本
 ├── tests/               # 离线单元测试
@@ -55,7 +55,13 @@ python3 -u voice_service.py
 
 ## 配置与安全
 
-`config/config.py` 可能包含历史真实凭据，已由仓库根 `.gitignore` 排除。不要打印、复制、提交或覆盖板端本地配置。新凭据应通过环境变量或未提交的本地配置提供，并轮换所有曾写入历史文件的密钥。
+默认提供方是 `mimo`，所需模型固定为 `mimo-v2.5-asr`、`mimo-v2.5`、`mimo-v2.5-tts`。同一 `MIMO_API_KEY` 用于三种模型，但账号仍需实际具备对应权限。
+
+`config/config.py` 可能包含历史真实凭据，已由仓库根 `.gitignore` 排除。代码只解析其中受支持的标量配置，不执行该文件。新部署优先从 `MIMO_API_KEY` 环境变量取值，也可以通过 `VOICE_LOCAL_CONFIG` 指向一个未提交的本地配置文件。不要打印、复制、提交或覆盖板端本地配置。
+
+MiMo TTS 默认使用流式 PCM，服务端不支持流式或在首帧前返回无效响应时自动降级为非流式 WAV；音频一旦开始播放就不会重试或重放。无论服务端返回 24/48 kHz，ALSA 前都必须转换为单声道 PCM16 16 kHz。
+
+迁移验证、部署前检查和回滚命令见 `docs/mimo-migration.md`。
 
 ## 已验证能力
 
@@ -66,7 +72,7 @@ python3 -u voice_service.py
 
 ## 后续重点
 
-1. 迁移并轮换历史凭据。
-2. 记录真实首句播放与完整回答耗时。
-3. 做短周期多轮稳定性验证。
+1. 在板端完成 MiMo 三模型权限和真实麦克风闭环验收。
+2. 由凭据所有者在对应平台撤销已退役的百度、火山凭据。
+3. 记录真实首句播放与完整回答耗时。
 4. 评估唤醒词，并保留按键作为可靠后备入口。

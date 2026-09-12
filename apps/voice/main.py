@@ -10,8 +10,11 @@ import threading
 import subprocess
 import tempfile
 import select
-import termios
-import tty
+try:
+    import termios
+    import tty
+except ImportError:
+    termios = tty = None  # Windows runs offline tests, not ALSA/TTY interaction.
 import time
 import queue
 import unicodedata
@@ -19,12 +22,12 @@ import unicodedata
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import HIGH_PASS_ENABLE, HIGH_PASS_CUTOFF
+from config import HIGH_PASS_ENABLE, HIGH_PASS_CUTOFF, VOICE_LOCAL_RESPONSES
 from llm import create_llm
 from tts.tts import TTSEngine
 from audio.play import AudioPlayer
 from audio.record import AudioRecorder
-from asr.baidu_asr import BaiduASR
+from asr import create_asr
 from tools import get_tools_schema, execute_tool, get_local_response
 
 
@@ -97,7 +100,7 @@ class AIVoiceTerminal:
         self.tts = TTSEngine()
         self.player = AudioPlayer()
         self.recorder = AudioRecorder()
-        self.asr = BaiduASR()
+        self.asr = create_asr()
         self.history = []
         self.max_response_chars = 500
         self.high_pass = HIGH_PASS_ENABLE
@@ -142,7 +145,8 @@ class AIVoiceTerminal:
 
         print(f"\nYou: {user_input}")
 
-        local_response = get_local_response(user_input)
+        self._reply_has_output = False
+        local_response = get_local_response(user_input) if VOICE_LOCAL_RESPONSES else ""
         if local_response:
             print("Route: local fast response", flush=True)
             self._emit_timing("local_response")
@@ -171,12 +175,17 @@ class AIVoiceTerminal:
         try:
             self._process_input_streaming(user_input)
         except Exception as e:
-            print(f"Streaming failed ({e}), falling back to blocking")
-            self._process_input_blocking(user_input)
+            print(f"Streaming failed: {type(e).__name__}")
+            if self._reply_has_output:
+                self._emit_event("error", message="回答中断，已保留文字，请重试")
+            else:
+                self._process_input_blocking(user_input)
 
     def _process_input_streaming(self, user_input: str):
         """Streaming pipeline: token -> sentence -> queue -> TTS+play thread"""
-        sentence_q = queue.Queue()
+        sentence_q = queue.Queue(maxsize=8)
+        consumer_failed = threading.Event()
+        speech_deadline = time.monotonic() + 90
         full_response = []
         stream_timing = {
             "tts_request": False,
@@ -187,7 +196,6 @@ class AIVoiceTerminal:
         playback_errors = []
         # Consumer thread: take sentences from queue, TTS + play
         def consumer():
-            idx = 0
             while True:
                 item = sentence_q.get()
                 if item is None:  # Sentinel: stream ended
@@ -195,14 +203,14 @@ class AIVoiceTerminal:
                 speech_item = self._sanitize_tts_text(item)
                 if not speech_item:
                     continue
-                idx += 1
-                audio_file = f"/tmp/tts_stream_{idx}.wav"
                 try:
+                    if time.monotonic() >= speech_deadline:
+                        raise TimeoutError("Speech round deadline")
                     if not stream_timing["tts_request"]:
                         stream_timing["tts_request"] = True
                         self._emit_timing("tts_request")
                         self._emit_event("state", state="replying", message="正在合成语音")
-                    if self.tts.text_to_speech(speech_item, audio_file):
+                    def on_start():
                         if not stream_timing["tts_ready"]:
                             stream_timing["tts_ready"] = True
                             self._emit_timing("tts_ready")
@@ -210,15 +218,12 @@ class AIVoiceTerminal:
                             stream_timing["playback_start"] = True
                             self._emit_timing("playback_start")
                             self._emit_event("state", state="playing", message="正在播放回答")
-                        if not self.player.play(audio_file):
-                            playback_errors.append("音频播放失败")
-                        time.sleep(0.1)
-                    else:
-                        playback_errors.append("语音合成失败")
+                    if not self._play_speech(speech_item, on_start):
+                        raise RuntimeError("Speech delivery failed")
                 except Exception as e:
-                    playback_errors.append(type(e).__name__)
-                finally:
-                    self._safe_unlink(audio_file)
+                    playback_errors.append("语音合成或播放中断，已保留文字回答")
+                    consumer_failed.set()
+                    break
 
         t = threading.Thread(target=consumer, daemon=True)
         t.start()
@@ -229,8 +234,22 @@ class AIVoiceTerminal:
         self._emit_timing("llm_request")
         accum = SentenceAccumulator()
         first_token_seen = False
+        token_count = 0
+        stream = None
+
+        def enqueue(item):
+            while not consumer_failed.is_set():
+                if time.monotonic() >= speech_deadline:
+                    raise TimeoutError("Speech queue deadline")
+                try:
+                    sentence_q.put(item, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
+
         try:
-            for token in self.llm.chat_stream(user_input, self.history):
+            stream = self.llm.chat_stream(user_input, self.history)
+            for token in stream:
                 if not isinstance(token, str) or not token:
                     continue
                 if not first_token_seen and self._is_api_failure(token):
@@ -238,20 +257,37 @@ class AIVoiceTerminal:
                 if not first_token_seen:
                     first_token_seen = True
                     self._emit_timing("llm_first_token")
+                token = token[:max(0, self.max_response_chars - token_count)]
+                token_count += len(token)
+                self._reply_has_output = True
                 full_response.append(token)
                 print(token, end="", flush=True)
                 self._emit_event("answer_delta", text=token)
                 sentences = accum.feed(token)
                 for s in sentences:
-                    sentence_q.put(s)
+                    enqueue(s)
+                if token_count >= self.max_response_chars:
+                    break
 
             # Flush remaining buffer
             remaining = accum.flush()
             if remaining:
-                sentence_q.put(remaining)
+                enqueue(remaining)
             self._emit_timing("llm_end")
         finally:
-            sentence_q.put(None)  # Signal consumer to stop
+            close = getattr(stream, "close", None)
+            if close:
+                try:
+                    close()
+                except Exception as error:
+                    print("Stream cleanup failed: %s" % type(error).__name__)
+            # Do not admit another round until the bounded consumer exits.
+            while t.is_alive():
+                try:
+                    sentence_q.put(None, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
             t.join()
 
         self._emit_timing("reply_end")
@@ -288,6 +324,9 @@ class AIVoiceTerminal:
 
     def _speak_blocking(self, response: str, user_input: str = ""):
         """TTS + play a complete response string"""
+        if self._is_api_failure(response):
+            self._emit_event("error", message="AI 请求失败，请重试")
+            return
         if len(response) > self.max_response_chars:
             response = response[:self.max_response_chars] + "..."
 
@@ -304,25 +343,29 @@ class AIVoiceTerminal:
         print("Synthesizing speech...", end=" ", flush=True)
         self._emit_timing("tts_request")
         speech_text = self._sanitize_tts_text(response)
-        audio_file = self.tts.text_to_speech(speech_text)
+        def on_start():
+            self._emit_timing("tts_ready")
+            self._emit_event("state", state="playing", message="正在播放回答")
+            self._emit_timing("playback_start")
 
-        if audio_file:
-            try:
-                self._emit_timing("tts_ready")
-                fsize = os.path.getsize(audio_file) if os.path.exists(audio_file) else 0
-                print(f"done ({fsize} bytes)")
-                self._emit_event("state", state="playing", message="正在播放回答")
-                self._emit_timing("playback_start")
-                self.player.play(audio_file)
-                time.sleep(0.5)
-                self._emit_timing("reply_end")
-            finally:
-                self._safe_unlink(audio_file)
-        else:
-            print("TTS FAILED - no audio file generated")
-            print("Text response shown above")
+        try:
+            if not self._play_speech(speech_text, on_start):
+                self._emit_event("error", message="语音合成或播放失败，已显示文字回答")
+        finally:
             self._emit_timing("reply_end")
-            self._emit_event("error", message="语音合成失败，已显示文字回答")
+
+    def _play_speech(self, text, on_start):
+        """Keep the UI protocol independent of file versus PCM transport."""
+        if self.tts.supports_pcm_stream:
+            return self.player.play_pcm_stream(self.tts.pcm_stream(text), on_start)
+        audio_file = self.tts.text_to_speech(text)
+        if not audio_file:
+            return False
+        try:
+            on_start()
+            return self.player.play(audio_file)
+        finally:
+            self._safe_unlink(audio_file)
 
     def _call_llm_with_retry(self, user_input: str, retries: int = 3) -> str:
         """Call MiMo with exponential backoff retry"""
@@ -747,6 +790,17 @@ class AIVoiceTerminal:
         else:
             self._text_mode()
 
+    def close(self):
+        """Release recording state and persistent provider connections."""
+        self._discard_active_recording()
+        for adapter in (self.asr, self.tts, self.llm):
+            close = getattr(adapter, "close", None)
+            if close:
+                try:
+                    close()
+                except Exception as error:
+                    print("Adapter cleanup failed: %s" % type(error).__name__)
+
 
 def main():
     """Main entry point"""
@@ -760,12 +814,16 @@ def main():
 
     signal.signal(signal.SIGINT, signal_handler)
 
+    terminal = None
     try:
         terminal = AIVoiceTerminal()
         terminal.run()
     except Exception as e:
         print(f"Fatal error: {e}")
         sys.exit(1)
+    finally:
+        if terminal:
+            terminal.close()
 
 
 if __name__ == "__main__":

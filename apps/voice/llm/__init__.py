@@ -7,6 +7,7 @@ def create_llm():
     if LLM_ENGINE == "glm":
         from llm.glm import GLMLLM
         return GLMLLM()
-    else:
+    if LLM_ENGINE == "mimo":
         from llm.mimo import MiMoLLM
         return MiMoLLM()
+    raise ValueError("Unknown LLM provider")

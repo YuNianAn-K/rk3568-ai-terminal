@@ -1,8 +1,7 @@
 """
 MiMo LLM Module - Xiaomi MiMo v2.5 API Integration
 """
-import requests
-import json
+from mimo_http import MiMoError, MiMoHTTP, first_choice
 from config import MIMO_API_KEY, MIMO_API_URL, MIMO_MODEL
 from llm.base import BaseLLM
 
@@ -13,17 +12,16 @@ class MiMoLLM(BaseLLM):
         self.api_key = MIMO_API_KEY
         self.api_url = MIMO_API_URL
         self.model = MIMO_MODEL
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        self.http = MiMoHTTP(api_key=self.api_key, url=self.api_url)
 
     def _build_payload(self, messages, tools=None, stream=False):
+        from config import MIMO_THINKING
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 400
+            "max_tokens": 400,
+            "thinking": {"type": MIMO_THINKING},
         }
         if tools:
             payload["tools"] = tools
@@ -35,17 +33,13 @@ class MiMoLLM(BaseLLM):
         """Raw API call returning full response dict"""
         payload = self._build_payload(messages, tools=tools)
         try:
-            response = requests.post(
-                self.api_url, headers=self.headers,
-                json=payload, timeout=30
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]
-        except requests.exceptions.RequestException as e:
-            return {"content": f"API调用失败: {e}", "tool_calls": None}
-        except (KeyError, IndexError) as e:
-            return {"content": f"API响应格式错误: {e}", "tool_calls": None}
+            choice = first_choice(self.http.request(payload), allow_tools=bool(tools))
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                raise MiMoError("invalid_response")
+            return message
+        except MiMoError as error:
+            return {"content": "API调用失败: " + str(error), "tool_calls": None}
 
     def chat(self, user_input, history=None):
         """Simple chat: send input, get text response"""
@@ -66,31 +60,35 @@ class MiMoLLM(BaseLLM):
         messages = self._build_messages(user_input, history)
         payload = self._build_payload(messages, stream=True)
 
+        complete = False
+        has_text = False
+        events = self.http.responses(payload)
         try:
-            response = requests.post(
-                self.api_url, headers=self.headers,
-                json=payload, stream=True, timeout=30
-            )
-            response.raise_for_status()
+            for event in events:
+                if event.get("_done"):
+                    complete = True
+                    break
+                if event.get("choices") == [] and "usage" in event:
+                    continue
+                choice = first_choice(event)
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    raise MiMoError("invalid_stream")
+                content = delta.get("content")
+                if content is not None and not isinstance(content, str):
+                    raise MiMoError("invalid_stream")
+                if content:
+                    has_text = True
+                    yield content
+                if choice.get("finish_reason") == "stop":
+                    complete = True
+            if not complete or not has_text:
+                raise MiMoError("truncated_stream" if has_text else "empty_response")
+        finally:
+            events.close()
 
-            for line in response.iter_lines():
-                if line:
-                    line = line.decode('utf-8')
-                    if line.startswith('data: '):
-                        data = line[6:]
-                        if data == '[DONE]':
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            if 'choices' in chunk and len(chunk['choices']) > 0:
-                                delta = chunk['choices'][0].get('delta', {})
-                                content = delta.get('content')
-                                if isinstance(content, str) and content:
-                                    yield content
-                        except json.JSONDecodeError:
-                            continue
-        except requests.exceptions.RequestException as e:
-            yield f"API调用失败: {str(e)}"
+    def close(self):
+        self.http.close()
 
 
 # Test function
