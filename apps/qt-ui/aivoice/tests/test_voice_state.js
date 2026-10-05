@@ -33,3 +33,5 @@ assert.notEqual(state.errorKey(4, "failed"), state.errorKey(5, "failed"));
 assert.match(state.hint("playing", true), /播放结束/);
 assert.doesNotMatch(state.title("offline", false), /本地/);
 console.log("Voice state mapping and interaction checks passed.");
+assert.match(state.title("idle", true, "待唤醒：小爱同学"), /待唤醒/);
+assert.match(state.hint("recording", true, "正在聆听，说完会自动结束"), /自动结束/);

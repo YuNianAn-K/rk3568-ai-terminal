@@ -59,8 +59,26 @@ Rectangle {
                 }
             }
             Rectangle { width: parent.width; height: 1; color: root.theme.panelBorder }
+            Row {
+                spacing: 12 * root.unit
+                Repeater {
+                    model: ["开启唤醒", "关闭唤醒/按键"]
+                    Rectangle {
+                        width: 240 * root.unit; height: 50 * root.unit
+                        radius: 10 * root.unit; color: root.theme.panel
+                        Text { anchors.centerIn: parent; text: modelData; color: root.theme.textPrimary; font.pixelSize: 18 * root.unit }
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: root.service.connected && (root.service.state === "idle" || root.service.state === "error")
+                            onClicked: { if (index === 0) root.service.enableWake(); else root.service.disableWake() }
+                        }
+                    }
+                }
+            }
             Repeater {
                 model: [
+                    ["WAKE → MIC", "wake_detected", "record_start"],
+                    ["WAKE → REPLY", "wake_detected", "reply_end"],
                     ["MIC OPEN", "button_trigger", "record_start"],
                     ["RECORD FINALIZE", "record_stop_requested", "record_end"],
                     ["ASR", "asr_request", "asr_result"],

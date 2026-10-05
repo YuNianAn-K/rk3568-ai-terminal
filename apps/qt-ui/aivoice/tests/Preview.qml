@@ -24,7 +24,9 @@ Window {
         { name: "speaking1080", raw: "playing", visual: "speaking", action: "none", w: 1080, h: 1920 },
         { name: "landscape", raw: "idle", visual: "idle", action: "start", w: 1280, h: 720 },
         { name: "longtext", raw: "idle", visual: "idle", action: "start", longText: true },
-        { name: "diagnostics", raw: "idle", visual: "idle", action: "start", diagnostics: true }
+        { name: "diagnostics", raw: "idle", visual: "idle", action: "start", diagnostics: true },
+        { name: "wake_waiting", raw: "idle", visual: "idle", action: "start", message: "待唤醒：小爱同学 · 也可按键" },
+        { name: "auto_listening", raw: "recording", visual: "listening", action: "stop", message: "正在聆听，说完会自动结束" }
     ]
     function check(condition, label) {
         if (!condition) { failures++; console.error("FAILED: " + label) }
@@ -58,6 +60,8 @@ Window {
         function reconnectService() { reconnects++ }
         function cancel() { cancels++ }
         function refreshStatus() {}
+        function enableWake() {}
+        function disableWake() {}
     }
     AppMainBody { id: body; anchors.fill: parent; service: mock }
     function nextCase() {
@@ -68,6 +72,7 @@ Window {
         width = test.w || 720; height = test.h || 1280
         mock.connected = test.raw !== "offline"
         mock.state = test.raw
+        mock.message = test.message || "测试状态"
         mock.answer = test.longText ? new Array(50).join("这是较长的回答，包含 <b>普通文本</b>，不得超出卡片。")
                                     : "我在这里。轻触麦克风，就可以开始我们的对话。"
         body.diagnosticsVisible = !!test.diagnostics
@@ -133,9 +138,14 @@ Window {
         check(!core.animationsRunning, "hidden stops core animations")
         body.visible = true
         mock.state = "recording"
+        mock.message = "测试状态"
         var before = mock.cancels
         body.resetInteraction()
         check(mock.cancels === before + 1, "return cancels recording")
+        mock.message = "正在聆听，说完会自动结束"
+        before = mock.cancels
+        body.resetInteraction()
+        check(mock.cancels === before, "background page does not cancel automatic recording")
         for (var i = 0; i < 3; i++) {
             mock.state = ["initializing", "starting", "replying"][i]
             check(body.interaction === "none", "transitional state has no start")

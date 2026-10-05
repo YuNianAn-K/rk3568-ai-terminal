@@ -24,7 +24,7 @@ class FakeTerminal:
         self._audio_file = None
         self._retry_count = 0
 
-    def _start_recording(self):
+    def _start_recording(self, release_delay=0.3):
         self._recording = True
         self.event_callback("state", {
             "state": "recording",

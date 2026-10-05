@@ -5,6 +5,8 @@
 apps/voice/config/config.py
 local/
 apps/voice/vendor/
+apps/voice/vendor-wake/
+apps/voice/config/wake.enabled
 
 # Python caches and local environments
 __pycache__/

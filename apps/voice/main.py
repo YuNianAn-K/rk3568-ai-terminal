@@ -117,18 +117,12 @@ class AIVoiceTerminal:
         self.high_pass = HIGH_PASS_ENABLE
         self.noise_rms = self._measure_noise()
 
-        # Check wake word availability
+        # The service owns local wake and microphone handoff. Never load the
+        # historical English timer detector or claim it supports Chinese.
         self.wake_detector = None
-        try:
-            from wake.porcupine import WakeWordDetector
-            self.wake_detector = WakeWordDetector()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"Wake word disabled: {e}")
 
         print(f"Microphone: {'available' if self.recorder.has_mic else 'not detected (text mode)'}")
-        print(f"Wake word: {'available' if self.wake_detector and self.wake_detector.available else 'disabled'}")
+        print("Wake word: optional Chinese KWS managed by voice_service")
         print("Initialization complete!\n")
 
     def _emit_event(self, event_type: str, **payload) -> None:
@@ -489,6 +483,11 @@ class AIVoiceTerminal:
 
     def _record_audio(self):
         """Start recording audio"""
+        if getattr(self, "_hands_free", False):
+            from audio.capture import AutomaticRecording
+            proc = AutomaticRecording(max_seconds=self.recorder.max_seconds,
+                                      on_first_frame=lambda: self._emit_timing("first_audio_frame"))
+            return proc, proc.path
         return self.recorder.record_async()
 
 
@@ -746,7 +745,9 @@ class AIVoiceTerminal:
         self._audio_file = audio_file
         self._recording = True
         print("\n[Recording] Press Enter to stop...")
-        self._emit_event("state", state="recording", message="正在聆听")
+        self._emit_event("state", state="recording", message=(
+            "正在聆听，说完会自动结束" if getattr(self, "_hands_free", False)
+            else "正在聆听"))
         self._emit_timing("record_start")
         return True
 
@@ -780,6 +781,17 @@ class AIVoiceTerminal:
 
             self._emit_timing("record_end")
 
+            if hasattr(proc, "speech_detected"):
+                print("[VOICE][stage=auto_endpoint][reason=%s]" %
+                      (proc.error or proc.endpoint.reason or "manual_stop"), flush=True)
+                if proc.error or not proc.speech_detected:
+                    self._safe_unlink(audio_file)
+                    if proc.error:
+                        self._emit_event("error", message="自动录音失败，请重试或使用按键")
+                    else:
+                        self._emit_event("answer", text="没有听到指令，本轮未执行操作。")
+                    return
+
             if automatic:
                 print("\n[Recording limit reached] Processing captured audio...")
 
@@ -791,7 +803,7 @@ class AIVoiceTerminal:
                 if self._retry_count >= 2:
                     self._retry_count = 0
                     print("连续两次异常，请检查麦克风连接")
-                elif self._start_recording(release_delay=0.5):
+                elif not getattr(self, "_hands_free", False) and self._start_recording(release_delay=0.5):
                     print("[Recovery recording started]")
                 return
 

@@ -20,6 +20,7 @@ Window {
     property bool personFollowing: false
     property bool voiceOwned: false
     property bool voiceNotice: false
+    property bool autoVoice: voiceBridge.state === "recording" && voiceBridge.message.indexOf("自动结束") >= 0
     property bool showVoicePanel: personTracker.active || voiceOwned || voiceNotice
     property string personHint: !cameraReady ? "请先连接摄像头，等待实时画面" :
         !gimbalBridge.connected ? "云台控制未连接，请等待恢复" :
@@ -30,8 +31,9 @@ Window {
         personTarget.state === "multiple" ? "检测到多人，请点画面中的人物框选择目标" :
         "请站到镜头前，单人出现后自动选择"
     property string voiceLabel: !voiceBridge.connected ? "语音未连接" :
-        voiceOwned && voiceBridge.state === "recording" ? "结束录音" :
+        (voiceOwned || autoVoice) && voiceBridge.state === "recording" ? "结束录音" :
         voiceBridge.state === "initializing" ? "语音准备中" :
+        voiceBridge.state === "idle" && voiceBridge.message.indexOf("待唤醒") === 0 ? "小爱同学 · 或点此说话" :
         voiceBridge.state === "idle" || voiceBridge.state === "error" ? "说话控制云台" :
         voiceBridge.state === "recording" ? "其他页面正在录音" : "语音处理中"
     property bool cameraEnabled: cameraMonitor.present && visible && cameraFault === ""
@@ -137,6 +139,11 @@ Window {
     }
     Connections {
         target: voiceBridge
+        function onMessageChanged() {
+            // Display wake feedback here; never open/activate the AI Voice app.
+            if (window.active && (voiceBridge.message.indexOf("已唤醒") === 0 || window.autoVoice))
+                window.voiceNotice = true
+        }
         function onStateChanged() {
             if (voiceBridge.state === "idle" || voiceBridge.state === "error" || voiceBridge.state === "offline")
                 window.voiceOwned = false
@@ -414,9 +421,10 @@ Window {
             color: "#101c2b"; border.color: "#243347"
             Text {
                 x: 22; y: 15; width: 596
-                text: window.voiceOwned && voiceBridge.state === "recording" ?
+                text: window.autoVoice ? "正在聆听 · 说完自动结束" :
+                      window.voiceOwned && voiceBridge.state === "recording" ?
                       "正在录音 · 说完后点结束录音" :
-                      window.voiceOwned ? voiceBridge.message : "语音控制 · 开始跟踪人物 / 停止跟踪"
+                      window.voiceOwned || voiceBridge.state !== "idle" ? voiceBridge.message : "语音控制 · 开始跟踪人物 / 停止跟踪"
                 color: "#91a5b6"; font.pixelSize: 18; elide: Text.ElideRight
             }
         }
@@ -432,9 +440,9 @@ Window {
             MouseArea {
                 id: voiceArea; anchors.fill: parent
                 enabled: voiceBridge.connected && (voiceBridge.state === "idle" || voiceBridge.state === "error" ||
-                         (window.voiceOwned && voiceBridge.state === "recording"))
+                         ((window.voiceOwned || window.autoVoice) && voiceBridge.state === "recording"))
                 onClicked: {
-                    if (window.voiceOwned && voiceBridge.state === "recording") voiceBridge.stopRecording()
+                    if ((window.voiceOwned || window.autoVoice) && voiceBridge.state === "recording") voiceBridge.stopRecording()
                     else {
                         window.voiceNotice = true
                         window.voiceOwned = true

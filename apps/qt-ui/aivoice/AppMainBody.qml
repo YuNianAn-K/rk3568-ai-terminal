@@ -17,7 +17,7 @@ Item {
 
     UiTheme { id: appTheme }
     function resetInteraction() {
-        if (voiceState === "recording") service.cancel()
+        if (voiceState === "recording" && service.message.indexOf("自动结束") < 0) service.cancel()
     }
     function activateVoice() {
         if (!active || !visible || diagnosticsVisible) return
@@ -101,13 +101,13 @@ Item {
         }
         Text {
             x: 40; y: 650; width: 640
-            text: VoiceState.title(root.voiceState, root.service.connected)
+            text: VoiceState.title(root.voiceState, root.service.connected, root.service.message)
             horizontalAlignment: Text.AlignHCenter
             color: appTheme.textPrimary; font.pixelSize: 30; font.weight: Font.Medium
         }
         Text {
             x: 40; y: 701; width: 640
-            text: VoiceState.hint(root.voiceState, root.service.connected)
+            text: VoiceState.hint(root.voiceState, root.service.connected, root.service.message)
             horizontalAlignment: Text.AlignHCenter
             color: appTheme.textSecondary; font.pixelSize: 19; wrapMode: Text.Wrap
         }

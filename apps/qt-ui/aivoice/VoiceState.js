@@ -22,8 +22,9 @@ function action(state, connected) {
     return "none";
 }
 
-function title(state, connected) {
+function title(state, connected, message) {
     if (!connected || state === "offline") return "语音服务未连接";
+    if (state === "idle" && String(message).indexOf("待唤醒") === 0) return "待唤醒 · 小爱同学";
     switch (state) {
     case "initializing": return "正在准备";
     case "starting": return "准备聆听";
@@ -37,8 +38,10 @@ function title(state, connected) {
     }
 }
 
-function hint(state, connected) {
+function hint(state, connected, message) {
     if (!connected || state === "offline") return "离线 · 轻触麦克风重新连接";
+    if (state === "idle" && String(message).indexOf("待唤醒") === 0) return "说小爱同学，提示音后说话 · 按键仍可用";
+    if (state === "recording" && String(message).indexOf("自动结束") >= 0) return "说完自动结束，最多 10 秒 · 也可轻触结束";
     switch (state) {
     case "initializing": return "语音服务正在启动，请稍候";
     case "starting": return "正在打开麦克风，请稍候";

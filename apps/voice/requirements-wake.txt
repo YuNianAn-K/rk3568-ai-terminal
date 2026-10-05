@@ -1,0 +1,4 @@
+# Optional KWS runtime only. Board deployment uses the prechecked ARM64 wheels
+# with --no-index --no-deps --target vendor-wake; reuse the installed numpy.
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8

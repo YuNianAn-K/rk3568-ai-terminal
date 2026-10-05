@@ -86,9 +86,10 @@ class Tracking(QObject):
 
 class Voice(QObject):
     stateChanged = Signal()
+    messageChanged = Signal()
     connected = Property(bool, lambda self: self.available, notify=stateChanged)
     state = Property(str, lambda self: self.value, notify=stateChanged)
-    message = Property(str, lambda self: "点说话，说开始跟踪人物或停止跟踪", constant=True)
+    message = Property(str, lambda self: self.notice, notify=messageChanged)
     transcript = Property(str, lambda self: self.heard, notify=stateChanged)
     answer = Property(str, lambda self: self.reply, notify=stateChanged)
     errorMessage = Property(str, lambda self: self.error, notify=stateChanged)
@@ -99,6 +100,7 @@ class Voice(QObject):
         self.heard = ""
         self.reply = ""
         self.error = ""
+        self.notice = "点说话，说开始跟踪人物或停止跟踪"
     @Slot()
     def startRecording(self):
         self.value = "recording"
@@ -297,6 +299,20 @@ def main():
                              __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 820))
             assert not window.property("showVoicePanel") and bridge.starts == starts
             capture("manual")
+            # Wake stays in this window: no app launch, focus request or tracking stop.
+            voice.value = "starting"
+            voice.notice = "已唤醒，提示音后请说话"
+            voice.messageChanged.emit()
+            voice.stateChanged.emit()
+            assert window.property("voiceNotice")
+            stops = bridge.stops
+            voice.value = "recording"
+            voice.notice = "正在聆听，说完会自动结束"
+            voice.messageChanged.emit()
+            voice.stateChanged.emit()
+            assert window.property("autoVoice") and not window.property("voiceOwned")
+            assert bridge.stops == stops
+            capture("wake_recording")
             print("PASS: actual QML renders; explicit follow and loss stop; voice transcript/error/offline; retained STOP result; return to manual without motion")
         except Exception as error:
             errors.append(error)

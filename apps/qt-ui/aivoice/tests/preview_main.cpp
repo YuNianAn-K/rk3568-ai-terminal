@@ -1,5 +1,7 @@
 #include <QDir>
 #include <QGuiApplication>
+#include <QFontDatabase>
+#include <QFont>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
@@ -19,8 +21,15 @@ static void captureMessage(QtMsgType type, const QMessageLogContext &, const QSt
 int main(int argc, char *argv[])
 {
     qputenv("QT_QUICK_BACKEND", "software");
+#ifdef Q_OS_WIN
+    qputenv("QT_QPA_FONTDIR", "C:/Windows/Fonts");
+#endif
     qInstallMessageHandler(captureMessage);
     QGuiApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
+    app.setFont(QFont(QStringLiteral("Microsoft YaHei")));
+#endif
     if (app.arguments().size() != 2) {
         qCritical() << "Usage: emotion_preview_test OUTPUT_DIRECTORY";
         return 2;

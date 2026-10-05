@@ -47,6 +47,10 @@ class VoiceService:
         self.service_started_at = time.monotonic()
         self.round_started_mono_ms = None
         self.timings = {}
+        self.wake_detector = None
+        self.wake_enabled = False
+        self.wake_resume_at = 0.0
+        self.wake_thread = None
 
     def snapshot(self):
         with self.state_lock:
@@ -71,12 +75,19 @@ class VoiceService:
             terminal._record_proc = None
             terminal._audio_file = None
             terminal._retry_count = 0
-            self.terminal = terminal
-            if not terminal.recorder.has_mic:
-                self._set_error("没有检测到麦克风")
-                return False
-            self._set_state("idle", "语音服务已就绪")
-            return True
+            with self.command_lock:
+                if self.stop_event.is_set():
+                    terminal.close()
+                    return False
+                self.terminal = terminal
+                if not terminal.recorder.has_mic:
+                    self._set_error("没有检测到麦克风")
+                    return False
+                self._set_state("idle", "语音服务已就绪")
+                from config import VOICE_WAKE_ENABLE
+                if VOICE_WAKE_ENABLE:
+                    self._configure_wake(True)
+                return True
         except Exception as e:
             print(f"Voice service initialization failed: {type(e).__name__}: {e}",
                   flush=True)
@@ -257,7 +268,115 @@ class VoiceService:
             return self._begin_finish(conn, automatic=False)
         if name == "cancel":
             return self._cancel_round(conn)
+        if name in ("wake_enable", "wake_disable"):
+            with self.command_lock:
+                if self.state not in self.STARTABLE_STATES or self.round_worker_active:
+                    return self._reply(conn, False, "busy", "请等本轮结束后切换唤醒")
+                ok = self._configure_wake(name == "wake_enable")
+                return self._reply(conn, ok, "wake_mode" if ok else "wake_unavailable", self.message)
         return self._reply(conn, False, "invalid", "未知命令")
+
+    def _configure_wake(self, enabled):
+        if self.stop_event.is_set() or (enabled and self.terminal is None):
+            return False
+        try:
+            if enabled and self.wake_detector is None:
+                from config import VOICE_WAKE_MODEL_PATH
+                from wake.sherpa_keyword import ChineseWakeDetector
+                self.wake_detector = ChineseWakeDetector(VOICE_WAKE_MODEL_PATH)
+            if not enabled and self.wake_detector:
+                self.wake_detector.pause()
+            self.wake_enabled = enabled
+            if enabled and (self.wake_thread is None or not self.wake_thread.is_alive()):
+                self.wake_thread = threading.Thread(target=self._monitor_wake,
+                                                  name="voice-wake", daemon=True)
+                self.wake_thread.start()
+            self._set_state("idle", "待唤醒：小爱同学 · 也可按键" if enabled else "按键模式，唤醒已关闭")
+            return True
+        except Exception as error:
+            self.wake_enabled = False
+            print("[VOICE][stage=wake_init][error=%s]" % type(error).__name__, flush=True)
+            self._set_error("中文唤醒不可用，仍可使用按键录音")
+            return False
+
+    def _monitor_wake(self):
+        while not self.stop_event.wait(0.02):
+            try:
+                # Serialize polling and handoff with every button command.
+                # No callback is invoked while the detector's own lock is held.
+                with self.command_lock:
+                    if (not self.wake_enabled or self.round_worker_active or
+                            self.state not in self.STARTABLE_STATES or
+                            time.monotonic() < self.wake_resume_at):
+                        continue
+                    if self.state == "error":
+                        self._set_state("idle", "待唤醒：小爱同学 · 上轮异常可重试")
+                    if self.wake_detector.poll_keyword():
+                        self._start_round(None, hands_free=True)
+            except Exception as error:
+                with self.command_lock:
+                    try:
+                        self.wake_detector.pause()
+                    except Exception:
+                        # Do not open another capture if release failed.
+                        self.wake_enabled = False
+                    self.wake_resume_at = time.monotonic() + 5
+                    print("[VOICE][stage=wake_capture][error=%s]" % type(error).__name__, flush=True)
+                    self._set_error("唤醒监听异常，稍后重试；可使用按键")
+
+    @staticmethod
+    def _hello_pcm():
+        from pathlib import Path
+        from audio.pcm import read_wav
+        path = Path(__file__).resolve().parent / "assets" / "wake-hello.wav"
+        with path.open("rb") as source:
+            data = source.read(50001)
+        if len(data) > 50000:
+            raise ValueError("Wake greeting too large")
+        pcm, _ = read_wav(data, require_16k=True)
+        if len(pcm) > 48000:
+            raise ValueError("Wake greeting too long")
+        return pcm
+
+    @staticmethod
+    def _feedback_pcm(kind):
+        if kind == "wake":
+            return VoiceService._hello_pcm()
+        import math
+        import struct
+        # Distinct local earcons; bounded amplitude and short fades avoid clicks.
+        tones = ((1046.5, .11), (0, .025), (784, .14))
+        pcm = bytearray()
+        for frequency, seconds in tones:
+            count = int(16000 * seconds)
+            for i in range(count):
+                envelope = min(1.0, i / 128, (count - 1 - i) / 128)
+                value = int(6000 * envelope * math.sin(2 * math.pi * frequency * i / 16000))
+                pcm.extend(struct.pack("<h", value))
+        return bytes(pcm)
+
+    def _play_feedback(self, kind):
+        try:
+            try:
+                pcm = self._feedback_pcm(kind)
+            except Exception:
+                if kind != "wake":
+                    raise
+                # A missing/corrupt greeting must not force a cloud request.
+                pcm = self._feedback_pcm("no_speech")
+                print("[VOICE][stage=wake_feedback][kind=fallback_tone]", flush=True)
+            ok = self.terminal.player.play_pcm_stream(iter([pcm]), timeout=2)
+        except Exception:
+            ok = False
+        print("[VOICE][stage=%s_feedback][status=%s]" %
+              ("wake" if kind == "wake" else "no_speech", "played" if ok else "visual_only"), flush=True)
+        return bool(ok)
+
+    def _wake_feedback(self):
+        return self._play_feedback("wake")
+
+    def _idle_message(self):
+        return "待唤醒：小爱同学 · 也可按键" if self.wake_enabled else "可以开始下一轮"
 
     def _reply(self, conn, accepted, code, message):
         response = {
@@ -273,13 +392,16 @@ class VoiceService:
             pass
         return response
 
-    def _start_round(self, conn):
+    def _start_round(self, conn, hands_free=False):
         with self.command_lock:
+            if self.stop_event.is_set():
+                return self._reply(conn, False, "stopped", "语音服务正在退出")
             if self.terminal is None or not self.terminal.recorder.has_mic:
                 return self._reply(conn, False, "not_ready", "语音服务尚未就绪")
             if self.state not in self.STARTABLE_STATES or self.round_worker_active:
                 return self._reply(conn, False, "busy", "上一轮尚未结束")
-
+            if hands_free and not self.wake_enabled:
+                return self._reply(conn, False, "disabled", "唤醒已关闭")
             with self.state_lock:
                 self.round_id += 1
                 self.round_failed = False
@@ -288,11 +410,30 @@ class VoiceService:
                 self.last_error = ""
                 self.round_started_mono_ms = None
                 self.timings = {}
-            self._mark_stage("button_trigger")
+            self.terminal._hands_free = hands_free
+            self._mark_stage("wake_detected" if hands_free else "button_trigger")
+            if self.wake_detector:
+                try:
+                    self.wake_detector.pause()
+                except Exception:
+                    self._set_error("麦克风释放失败，请重启语音服务")
+                    return self._reply(conn, False, "record_failed", self.message)
+            if hands_free:
+                self._set_state("starting", "已唤醒，播报你好后请说话")
+                try:
+                    self._wake_feedback()
+                except Exception:
+                    print("[VOICE][stage=wake_feedback][status=visual_only]", flush=True)
+                self._mark_stage("wake_feedback_end")
             self._set_state("starting", "正在打开麦克风")
-            if not self.terminal._start_recording():
+            # The listener has already exited: the manual key-release delay
+            # would lose an immediate spoken onset after the wake cue.
+            started = (self.terminal._start_recording(release_delay=0.0) if hands_free
+                       else self.terminal._start_recording())
+            if not started:
                 if self.state != "error":
                     self._set_error("麦克风启动失败")
+                self.wake_resume_at = time.monotonic() + 2
                 return self._reply(conn, False, "record_failed", self.message)
             return self._reply(conn, True, "recording", "录音已开始")
 
@@ -313,6 +454,7 @@ class VoiceService:
             return self._reply(conn, True, "processing", "录音已结束")
 
     def _finish_round(self, automatic):
+        finished_proc = self.terminal._record_proc
         try:
             self.terminal._finish_recording(automatic=automatic)
         except Exception as e:
@@ -328,9 +470,21 @@ class VoiceService:
                     return
                 with self.state_lock:
                     failed = self.round_failed
+                if (not failed and not self.stop_event.is_set() and
+                        getattr(self.terminal, "_hands_free", False) and
+                        getattr(finished_proc, "speech_detected", None) is False and
+                        getattr(finished_proc, "error", None) is None and
+                        getattr(finished_proc, "returncode", None) == 0 and
+                        getattr(getattr(finished_proc, "endpoint", None), "reason", "") == "no_speech"):
+                    # Remain busy until playback drains; no button/wake may race it.
+                    self.round_worker_active = True
+                    self._play_feedback("no_speech")
+                    self._mark_stage("no_speech_feedback_end")
+                    self.round_worker_active = False
                 self._mark_stage("round_end")
+                self.wake_resume_at = time.monotonic() + 0.8
                 if not failed:
-                    self._set_state("idle", "可以开始下一轮")
+                    self._set_state("idle", self._idle_message())
                 self._broadcast({
                     "type": "diagnostics",
                     "diagnostics": self._collect_diagnostics(),
@@ -345,7 +499,8 @@ class VoiceService:
             if self.state == "recording":
                 self.terminal._discard_active_recording()
                 self._mark_stage("round_end")
-                self._set_state("idle", "录音已取消")
+                self.wake_resume_at = time.monotonic() + 0.8
+                self._set_state("idle", self._idle_message())
                 return self._reply(conn, True, "cancelled", "录音已取消")
             if self.state in self.STARTABLE_STATES:
                 return self._reply(conn, True, "idle", "当前没有活动轮次")
@@ -439,6 +594,15 @@ class VoiceService:
         if self.stop_event.is_set() and self.server_socket is None:
             return
         self.stop_event.set()
+        with self.command_lock:
+            self.wake_enabled = False
+            if self.wake_detector:
+                try:
+                    self.wake_detector.close()
+                except Exception as error:
+                    print("[VOICE][stage=wake_cleanup][error=%s]" % type(error).__name__, flush=True)
+        if self.wake_thread and self.wake_thread is not threading.current_thread():
+            self.wake_thread.join(timeout=3)
         if self.terminal:
             close = getattr(self.terminal, "close", None)
             if close:

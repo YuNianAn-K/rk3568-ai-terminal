@@ -74,6 +74,9 @@ void VoiceBridge::refreshStatus()
     sendCommand(QStringLiteral("status"));
 }
 
+void VoiceBridge::enableWake() { sendCommand(QStringLiteral("wake_enable")); }
+void VoiceBridge::disableWake() { sendCommand(QStringLiteral("wake_disable")); }
+
 void VoiceBridge::connectService()
 {
     if (m_socket.state() == QLocalSocket::ConnectedState ||
@@ -163,6 +166,15 @@ void VoiceBridge::processMessage(const QByteArray &line)
 
     const QJsonObject object = document.object();
     const QString type = object.value(QStringLiteral("type")).toString();
+    const int incomingRound = object.value(QStringLiteral("round_id")).toInt(m_roundId);
+    if ((type == QStringLiteral("timing") || type == QStringLiteral("state")) && incomingRound != m_roundId) {
+        m_roundId = incomingRound;
+        m_timings.clear();
+        setTranscript(QString());
+        setAnswer(QString());
+        setErrorMessage(QString());
+        emit diagnosticsChanged();
+    }
 
     if (type == QStringLiteral("snapshot")) {
         setState(object.value(QStringLiteral("state")).toString());
@@ -189,8 +201,8 @@ void VoiceBridge::processMessage(const QByteArray &line)
         return;
     }
     if (type == QStringLiteral("state")) {
-        setState(object.value(QStringLiteral("state")).toString());
         setMessage(object.value(QStringLiteral("message")).toString());
+        setState(object.value(QStringLiteral("state")).toString());
         return;
     }
     if (type == QStringLiteral("transcript")) {

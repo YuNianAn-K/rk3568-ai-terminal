@@ -8,6 +8,11 @@ OPTS="-u /root/AI_voice/voice_service.py"
 PIDFILE="/var/run/ai-voice.pid"
 LOGFILE="/var/log/ai-voice.log"
 export PYTHONPATH=/root/AI_voice
+# Non-secret opt-in marker; absence preserves the original button-only boot.
+if [ -f /root/AI_voice/config/wake.enabled ]; then
+    : "${VOICE_WAKE_ENABLE:=1}"
+    export VOICE_WAKE_ENABLE
+fi
 
 is_running() {
     [ -f "$PIDFILE" ] || return 1

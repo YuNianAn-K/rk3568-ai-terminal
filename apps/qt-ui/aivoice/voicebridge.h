@@ -41,6 +41,8 @@ public:
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void reconnectService();
     Q_INVOKABLE void refreshStatus();
+    Q_INVOKABLE void enableWake();
+    Q_INVOKABLE void disableWake();
 
 signals:
     void connectedChanged();

@@ -64,7 +64,10 @@ VOICE_LOCAL_RESPONSES = str(_setting("VOICE_LOCAL_RESPONSES", "1")).lower() in (
 # Preserve non-secret recording constraints and the optional GLM LLM engine.
 HIGH_PASS_ENABLE = str(_setting("HIGH_PASS_ENABLE", "true")).lower() in ("1", "true", "yes")
 HIGH_PASS_CUTOFF = int(_setting("HIGH_PASS_CUTOFF", 80))
-WAKE_WORD = _setting("WAKE_WORD", "小米")
+WAKE_WORD = "小爱同学"
+# Opt in only after the matching local model/runtime have been installed.
+VOICE_WAKE_ENABLE = str(_setting("VOICE_WAKE_ENABLE", "0")).lower() in ("1", "true", "yes")
+VOICE_WAKE_MODEL_PATH = _setting("VOICE_WAKE_MODEL_PATH", "/opt/ai-voice-wake/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20")
 GLM_API_KEY = _setting("GLM_API_KEY")
 GLM_API_URL = _setting("GLM_API_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
 GLM_MODEL = _setting("GLM_MODEL", "glm-4-flash")
