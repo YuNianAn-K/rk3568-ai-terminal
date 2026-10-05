@@ -1,0 +1,5 @@
+class SystemUICommonApi
+{
+    SIGNAL(serverSendVariant(const QString &appName, int type, int cmd, QVariant variant))
+    SLOT(void onServerVariant(const QString &appName, int type, int cmd, QVariant variant))
+}

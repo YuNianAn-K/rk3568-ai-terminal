@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>Main.qml</file>
+        <file>PersonOverlay.qml</file>
+        <file>PersonTargets.js</file>
+    </qresource>
+</RCC>

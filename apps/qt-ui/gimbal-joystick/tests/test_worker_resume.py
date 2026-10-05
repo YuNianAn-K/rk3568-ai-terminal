@@ -1,0 +1,184 @@
+"""Linux PTY regression: unknown startup, explicit center, stop and resume."""
+import json
+import os
+import pty
+import select
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+master, slave = pty.openpty()
+commands = []
+outputs = []
+position = None
+targets = [1500, 1500]
+active = [False, False]
+armed = False
+running = True
+person_mode = "--person" in sys.argv
+control_id = "a" * 32
+start_command = "PERSON_START " + control_id if person_mode else "TRACK_START"
+
+
+def firmware():
+    global position, armed
+    buffer = b""
+    while running:
+        if not select.select([master], [], [], .05)[0]:
+            continue
+        buffer += os.read(master, 4096)
+        while b"\n" in buffer:
+            raw, buffer = buffer.split(b"\n", 1)
+            command = raw.decode().strip()
+            commands.append(command)
+            if command == "PING":
+                reply = "PONG"
+            elif command == "PAN STOP":
+                active[:] = [False, False]
+                armed = False
+                reply = "PAN_PWM=OFF"
+            elif command in ("PAN?", "TILT?"):
+                axis = 0 if command == "PAN?" else 1
+                reply = command[:-1] + "_PWM=" + (
+                    str(position[axis]) + "US" if active[axis] else "OFF")
+            elif command == "TRK?":
+                reply = "TRK=ARMED" if armed else "TRK=OFF"
+            elif command == "TRK POS?":
+                reply = "TRK_POS=UNKNOWN" if position is None else (
+                    "TRK_POS=%04d,%04d" % tuple(position))
+            elif command == "TRK CENTER":
+                position = [1500, 1500]
+                targets[:] = position
+                active[:] = [True, True]
+                armed = True
+                reply = "TRK=CENTERING"
+            elif command == "TRK ARM":
+                assert position is not None
+                targets[:] = position
+                armed = True
+                reply = "TRK=ARMED"
+            elif command == "TRK KEEP":
+                reply = "TRK=ARMED"
+            elif command in ("TRK P+", "TRK P-", "TRK T+", "TRK T-") and armed:
+                axis = 0 if command[4] == "P" else 1
+                if not active[axis]:
+                    outputs.append((axis, position[axis]))
+                active[axis] = True
+                low, high = (500, 2500) if axis == 0 else (750, 2250)
+                targets[axis] = max(low, min(high, targets[axis] + (
+                    80 if command.endswith("+") else -80)))
+                position[axis] = targets[axis]
+                reply = "TRK_" + ("PAN" if axis == 0 else "TILT") + "=%dUS" % targets[axis]
+            else:
+                reply = "ERR"
+            os.write(master, (reply + "\r\n").encode())
+
+
+def send(text):
+    process.stdin.write((text + "\n").encode())
+    process.stdin.flush()
+
+
+def samples():
+    if person_mode:
+        # Detection is already running when follow is clicked. Exercise a
+        # first result queued in the same batch as PERSON_START.
+        stamp = int(time.monotonic() * 1000)
+        send("PERSON 0.20 0.20 0.72 0 %d %d" % (stamp, stamp))
+    time.sleep(.12)
+    for _ in range(4):
+        if person_mode:
+            stamp = int(time.monotonic() * 1000)
+            send("PERSON 0.20 0.20 0.72 0 %d %d" % (stamp, stamp))
+        else:
+            send("HAND 0.20 0.20 0.986 0")
+        time.sleep(.15)
+
+
+def wait_until(check, seconds=3):
+    deadline = time.monotonic() + seconds
+    while not check():
+        assert time.monotonic() < deadline, commands
+        time.sleep(.02)
+
+
+with tempfile.TemporaryDirectory() as temp:
+    thread = threading.Thread(target=firmware, daemon=True)
+    thread.start()
+    source = str(Path(__file__).resolve().parents[1])
+    code = ("import sys; sys.path.insert(0,%r); import gimbal_worker as w; "
+            "w.DEVICE=%r; w.LOCK_PATH=%r; w.main()") % (
+                source, os.ttyname(slave), temp + "/lock")
+    process = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        wait_until(lambda: "TRK POS?" in commands)
+        send(start_command)
+        samples()
+        assert "TRK ARM" not in commands and not outputs
+        send("CENTER")
+        wait_until(lambda: "TRK CENTER" in commands)
+        wait_until(lambda: not armed)
+        send(start_command)
+        samples()
+        wait_until(lambda: bool(outputs))
+        send("CONTROL_STOP " + control_id if person_mode else "STOP")
+        wait_until(lambda: not armed)
+        retained = tuple(position)
+        assert retained != (1500, 1500), retained
+        output_count = len(outputs)
+        center_count = commands.count("TRK CENTER")
+        send(start_command)
+        samples()
+        wait_until(lambda: len(outputs) >= output_count + 2)
+        assert outputs[output_count:output_count + 2] == [(0, retained[0]), (1, retained[1])], outputs
+        assert commands.count("TRK CENTER") == center_count
+        # A brief miss keeps the session; sustained loss removes output.
+        if not person_mode:
+            send("HAND 0.00 0.00 0.000 0")
+            time.sleep(.5)
+            assert armed
+        wait_until(lambda: not armed)
+        if person_mode:
+            # A stale first result must never ARM; a hand sample cannot steer
+            # a person session. Reject malformed/non-finite person data too.
+            for invalid in ("PERSON .2 .2 .72 0 1 2",
+                            "PERSON .2 .2 .72 1 1 2",
+                            "PERSON nan .2 .72 0 1 2",
+                            "PERSON .2 .2 .72 0",
+                            "PERSON .2 .2 .54 0 1 2"):
+                arm_count = commands.count("TRK ARM")
+                send(start_command)
+                time.sleep(.12)
+                send("HAND .2 .2 .986 0")
+                time.sleep(.12)
+                send(invalid)
+                time.sleep(.15)
+                assert commands.count("TRK ARM") == arm_count, commands
+                assert not armed
+        send("QUIT")
+        out, err = process.communicate(timeout=3)
+        assert process.returncode == 0, (out, err)
+        events = [json.loads(line) for line in out.splitlines()]
+        assert any(event.get("state") == "uninitialized" for event in events)
+        assert any(event.get("state") == "lost" for event in events)
+        assert not any(event["event"] == "error" for event in events)
+        if person_mode:
+            assert any(event.get("event") == "stopped" and event.get("request_id") == control_id
+                       for event in events), events
+            assert any(event.get("state") == "active" and event.get("request_id") == control_id
+                       for event in events), events
+        assert not any(active)
+        print("PASS:", "person" if person_mode else "hand",
+              "unknown start; explicit center; retained resume; loss/exit OFF; invalid person samples never ARM")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        running = False
+        thread.join(timeout=1)
+        os.close(slave)
+        os.close(master)
