@@ -20,6 +20,7 @@ Window {
             if (cmd === SystemUICommonApiClient.Show) {
                 appWindow.flags = Qt.FramelessWindowHint
                 appMainBody.visible = false
+                appMainBody.active = false
                 appWindow.requestActivate()
                 systemUiClient.askSystemUItohideOrShow(SystemUICommonApiClient.Hide)
             }
@@ -57,10 +58,12 @@ Window {
 
         onShowAppMainBody: {
             appMainBody.visible = show
+            appMainBody.active = show
         }
 
         onBackToSystemUi: {
             appMainBody.resetInteraction()
+            appMainBody.active = false
 
             systemUiClient.askSystemUItohideOrShow(SystemUICommonApiClient.Show)
         }

@@ -2,5 +2,14 @@
     <qresource prefix="/">
         <file>main.qml</file>
         <file>AppMainBody.qml</file>
+        <file>UiTheme.qml</file>
+        <file>VoiceState.js</file>
+        <file>EmotionCore.qml</file>
+        <file>VoiceWave.qml</file>
+        <file>ConversationCard.qml</file>
+        <file>DiagnosticsPanel.qml</file>
+        <file>core-cool.svg</file>
+        <file>core-warm.svg</file>
+        <file>eye-smile.svg</file>
     </qresource>
 </RCC>
