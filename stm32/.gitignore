@@ -1,0 +1,23 @@
+# Keil build outputs
+**/Objects/
+**/Listings/
+**/Debug/
+**/Release/
+**/DebugConfig/
+
+# Keil per-user state and logs
+**/*.uvguix.*
+**/*.uvoptx
+**/*.build_log.htm
+**/*.log
+
+# Common generated artifacts outside the standard output folders
+**/*.o
+**/*.d
+**/*.crf
+**/*.lnp
+**/*.map
+**/*.lst
+**/*.axf
+**/*.hex
+**/*.bin
