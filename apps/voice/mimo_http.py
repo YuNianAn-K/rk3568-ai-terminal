@@ -50,7 +50,10 @@ class MiMoHTTP:
             response = self.session.post(
                 self.url, headers={"Authorization": "Bearer " + self.api_key,
                                    "Content-Type": "application/json"},
-                json=payload, stream=True, timeout=(5, 10), allow_redirects=False,
+                json=payload, stream=True,
+                timeout=(min(5, max(1, budget / 3)),
+                         min(10, max(1, budget / 2))),
+                allow_redirects=False,
             )
             if response.status_code != 200:
                 try:

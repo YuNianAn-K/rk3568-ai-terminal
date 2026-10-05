@@ -28,7 +28,15 @@ from tts.tts import TTSEngine
 from audio.play import AudioPlayer
 from audio.record import AudioRecorder
 from asr import create_asr
+from asr.offline_commands import LocalASRError, OfflineCommandASR
 from tools import get_tools_schema, execute_tool, get_local_response
+from tools.pc13_led import (
+    PC13Led, LedControlError, needs_led_clarification, parse_led_action,
+)
+from tools.person_tracking import (
+    PersonTracking, TrackingControlError, parse_tracking_action,
+    needs_tracking_clarification, result_message,
+)
 
 
 class SentenceAccumulator:
@@ -101,6 +109,9 @@ class AIVoiceTerminal:
         self.player = AudioPlayer()
         self.recorder = AudioRecorder()
         self.asr = create_asr()
+        self.offline_asr = OfflineCommandASR()
+        self._cloud_retry_at = 0.0
+        self._last_route_up = True
         self.history = []
         self.max_response_chars = 500
         self.high_pass = HIGH_PASS_ENABLE
@@ -146,6 +157,26 @@ class AIVoiceTerminal:
         print(f"\nYou: {user_input}")
 
         self._reply_has_output = False
+        tracking_action = parse_tracking_action(user_input)
+        if tracking_action is not None:
+            self._handle_tracking_action(tracking_action, offline=False)
+            return
+        if needs_tracking_clarification(user_input):
+            self._speak_blocking(
+                "未操作云台。请明确说开始跟踪人物或停止跟踪。", remember=False)
+            return
+        led_action = parse_led_action(user_input)
+        if led_action is not None:
+            self._handle_led_action(led_action, offline=False)
+            return
+        if needs_led_clarification(user_input):
+            print("[VOICE][stage=led_intent][status=clarify]", flush=True)
+            self._speak_blocking(
+                "没有操作指示灯。请明确说打开、关闭或查询指示灯状态。",
+                remember=False,
+            )
+            return
+
         local_response = get_local_response(user_input) if VOICE_LOCAL_RESPONSES else ""
         if local_response:
             print("Route: local fast response", flush=True)
@@ -180,6 +211,52 @@ class AIVoiceTerminal:
                 self._emit_event("error", message="回答中断，已保留文字，请重试")
             else:
                 self._process_input_blocking(user_input)
+
+    def _handle_tracking_action(self, action, offline):
+        self._emit_event("state", state="thinking", message="正在核对云台状态")
+        self._emit_timing("tracking_request")
+        try:
+            reply = PersonTracking().execute(action)
+            response = result_message(reply)
+            print("[VOICE][stage=tracking_result][code=%s][accepted=%s]" %
+                  (reply["code"], reply["accepted"]), flush=True)
+        except TrackingControlError as error:
+            response = ("云台状态未确认，请查看板屏或按立即停止。" if error.kind == "timeout"
+                        else "云台连接不可用，请先打开云台摄像页面。")
+            print("[VOICE][stage=tracking_result][status=failed][kind=%s]" % error.kind,
+                  flush=True)
+        self._emit_timing("tracking_result")
+        if offline:
+            self._emit_event("answer", text=response)
+            self._emit_timing("reply_end")
+        else:
+            self._speak_blocking(response, remember=False)
+
+    def _handle_led_action(self, action, offline):
+        """Shared verified PC13 path; offline never waits for cloud TTS."""
+        self._emit_event("state", state="thinking", message="正在核对指示灯状态")
+        self._emit_timing("led_request")
+        try:
+            led = PC13Led()
+            if action == "query":
+                on = led.get_led()
+                response = "指示灯当前已打开。" if on else "指示灯当前已关闭。"
+            else:
+                on = action == "on"
+                led.set_led(on)
+                response = "指示灯已打开。" if on else "指示灯已关闭。"
+            print("[VOICE][stage=led_result][status=verified]", flush=True)
+        except LedControlError as error:
+            response = ("指示灯查询失败，请检查串口连接和设备状态。"
+                        if action == "query" else
+                        "指示灯控制失败，请检查串口连接和设备状态。")
+            print(f"[VOICE][stage=led_result][status=failed][kind={error.kind}]", flush=True)
+        self._emit_timing("led_result")
+        if offline:
+            self._emit_event("answer", text=response)
+            self._emit_timing("reply_end")
+        else:
+            self._speak_blocking(response, remember=False)
 
     def _process_input_streaming(self, user_input: str):
         """Streaming pipeline: token -> sentence -> queue -> TTS+play thread"""
@@ -322,7 +399,7 @@ class AIVoiceTerminal:
         print("done")
         self._speak_blocking(response, user_input)
 
-    def _speak_blocking(self, response: str, user_input: str = ""):
+    def _speak_blocking(self, response: str, user_input: str = "", remember=True):
         """TTS + play a complete response string"""
         if self._is_api_failure(response):
             self._emit_event("error", message="AI 请求失败，请重试")
@@ -334,11 +411,12 @@ class AIVoiceTerminal:
         self._emit_event("answer", text=response)
         self._emit_event("state", state="replying", message="正在合成语音")
 
-        if user_input:
-            self.history.append({"role": "user", "content": user_input})
-        self.history.append({"role": "assistant", "content": response})
-        if len(self.history) > 8:
-            self.history = self.history[-8:]
+        if remember:
+            if user_input:
+                self.history.append({"role": "user", "content": user_input})
+            self.history.append({"role": "assistant", "content": response})
+            if len(self.history) > 8:
+                self.history = self.history[-8:]
 
         print("Synthesizing speech...", end=" ", flush=True)
         self._emit_timing("tts_request")
@@ -421,6 +499,53 @@ class AIVoiceTerminal:
         hints = cls.TIME_TOOL_HINTS + cls.WEATHER_TOOL_HINTS
         return any(hint in normalized for hint in hints)
 
+    @staticmethod
+    def _default_route_available():
+        """A missing route is a fast, local signal to skip cloud ASR."""
+        try:
+            with open("/proc/net/route", encoding="ascii") as handle:
+                for line in handle.read().splitlines()[1:]:
+                    fields = line.split()
+                    if (len(fields) >= 4 and fields[0] != "lo" and
+                            fields[1] == "00000000" and
+                            int(fields[3], 16) & 0x2):
+                        return True
+            return False
+        except (OSError, ValueError):
+            return True
+
+    def _process_offline_command(self, audio_file, reason):
+        message = ("网络已断开，正在识别离线固定指令" if reason == "network_down"
+                   else "云端识别暂不可用，正在尝试离线指令")
+        self._emit_event("state", state="recognizing", message=message)
+        self._emit_timing("offline_asr_request")
+        try:
+            text = self.offline_asr.recognize(audio_file)
+        except LocalASRError as error:
+            print(f"[VOICE][stage=offline_asr][status=failed][kind={error.kind}]",
+                  flush=True)
+            self._emit_event("error", message="离线语音识别不可用，请检查本地模型")
+            return
+        finally:
+            self._emit_timing("offline_asr_result")
+        tracking_action = parse_tracking_action(text)
+        if tracking_action is not None:
+            self._emit_event("transcript", text=text)
+            self._handle_tracking_action(tracking_action, offline=True)
+            return
+        action = parse_led_action(text)
+        if action is None:
+            self._emit_event(
+                "answer",
+                text=("网络已断开。" if reason == "network_down"
+                      else "云端识别暂不可用。") +
+                     "离线模式未听清固定指令；支持指示灯开关/查询、开始跟踪人物或停止跟踪。",
+            )
+            self._emit_timing("reply_end")
+            return
+        self._emit_event("transcript", text=text)
+        self._handle_led_action(action, offline=True)
+
     def _process_audio(self, audio_file: str):
         """Process recorded audio: quality gate -> (highpass) -> ASR -> LLM -> TTS"""
         source_file = audio_file
@@ -431,9 +556,12 @@ class AIVoiceTerminal:
                 self._emit_event("error", message="录音失败或时间太短")
                 return
 
-            # Quality gate: reject too-quiet / clipped recordings so ASR never sees garbage
+            # Do not use startup ambient noise as a permanent reject threshold:
+            # a nearby voice/video during calibration can otherwise lock out
+            # every later round. ASR confidence and PC13 intent checks still
+            # decide whether a recording may cause a device action.
             rms = self._audio_rms(audio_file)
-            min_rms = max(200, (self.noise_rms or 150.0) * 1.5)
+            min_rms = 200
             if rms < min_rms:
                 print(f"Audio rms={rms:.0f} < {min_rms:.0f} - 声音太轻/没听清，请靠近麦克风再说一遍")
                 self._emit_event("error", message="声音太轻或没有听清，请靠近麦克风重试")
@@ -447,19 +575,30 @@ class AIVoiceTerminal:
             if self.high_pass:
                 processed_file = self._highpass(audio_file)
 
-            self._emit_event("state", state="recognizing", message="正在识别语音")
-            print(f"Recognizing... ({os.path.getsize(processed_file)} bytes)", end=" ", flush=True)
-            self._emit_timing("asr_request")
-            text = self.asr.recognize(processed_file)
-            self._emit_timing("asr_result")
-            print(f"done -> [{text}]")
-
-            if text:
-                self._emit_event("transcript", text=text)
-                self.process_input(text)
+            route_up = self._default_route_available()
+            if route_up and not self._last_route_up:
+                self._cloud_retry_at = 0.0
+            self._last_route_up = route_up
+            if route_up and time.monotonic() >= self._cloud_retry_at:
+                self._emit_event("state", state="recognizing", message="正在识别语音")
+                print(f"Recognizing... ({os.path.getsize(processed_file)} bytes)",
+                      end=" ", flush=True)
+                self._emit_timing("asr_request")
+                text, failure = self.asr.recognize_with_status(
+                    processed_file, retries=1, budget=8)
+                self._emit_timing("asr_result")
+                print("done", flush=True)
+                if text:
+                    self._cloud_retry_at = 0.0
+                    self._emit_event("transcript", text=text)
+                    self.process_input(text)
+                    return
+                if failure in ("network", "timeout", "http"):
+                    self._cloud_retry_at = time.monotonic() + 15
+                self._process_offline_command(processed_file, "cloud_failed")
             else:
-                print("Could not understand, try again")
-                self._emit_event("error", message="没有识别到有效语音，请重试")
+                self._process_offline_command(
+                    processed_file, "network_down" if not route_up else "cloud_failed")
         except Exception as e:
             print(f"Voice round failed: {type(e).__name__}: {e}")
             self._emit_event("error", message=f"本轮处理失败：{type(e).__name__}")
@@ -556,10 +695,12 @@ class AIVoiceTerminal:
 
     def _measure_noise(self, seconds: float = 1.0) -> float:
         """Sample ambient noise RMS to adaptively set the recording quality gate.
-        Skips samples pinned to DC (codec lockup) which would inflate the gate."""
+        A median prevents one startup sound from inflating every later round."""
         if not self.recorder.has_mic:
             return 0.0
-        for _ in range(2):
+        from statistics import median
+        readings = []
+        for _ in range(3):
             path = tempfile.mktemp(suffix=".wav")
             try:
                 proc = subprocess.Popen(
@@ -572,13 +713,13 @@ class AIVoiceTerminal:
                     if self._audio_is_constant(path):
                         print("Env noise baseline: constant sample, retry")
                         continue
-                    rms = self._audio_rms(path)
-                    print(f"Env noise baseline: rms={rms:.0f}")
-                    return rms
+                    readings.append(self._audio_rms(path))
             finally:
                 if os.path.exists(path):
                     os.unlink(path)
-        return 0.0
+        baseline = median(readings) if readings else 0.0
+        print(f"Env noise baseline: rms={baseline:.0f} samples={len(readings)}")
+        return baseline
 
     def _start_recording(self, release_delay: float = 0.3) -> bool:
         """Start arecord and verify that the child did not fail immediately."""

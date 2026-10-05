@@ -16,6 +16,10 @@ class MiMoASR:
         self.http = http or MiMoHTTP(api_key=api_key)
 
     def recognize(self, audio_file, retries=2):
+        return self.recognize_with_status(audio_file, retries=retries)[0]
+
+    def recognize_with_status(self, audio_file, retries=2, budget=20):
+        """Keep cloud failures distinct from an empty valid transcript."""
         try:
             with open(audio_file, "rb") as handle:
                 data = handle.read(self.MAX_AUDIO_BYTES + 1)
@@ -32,20 +36,21 @@ class MiMoASR:
             }
             for attempt in range(max(1, min(retries, 2))):
                 try:
-                    choice = first_choice(self.http.request(payload, budget=20))
+                    choice = first_choice(self.http.request(payload, budget=budget))
                     message = choice.get("message")
                     text = message.get("content") if isinstance(message, dict) else None
                     if not isinstance(text, str) or not text.strip():
                         raise MiMoError("empty_transcript")
-                    return text.strip()
+                    return text.strip(), None
                 except MiMoError as error:
                     if not error.retryable or attempt + 1 >= max(1, min(retries, 2)):
                         raise
                     retry_pause(error, attempt)
         except (OSError, AudioFormatError, MiMoError) as error:
+            kind = getattr(error, "kind", type(error).__name__)
             print("[VOICE][provider=mimo][stage=asr_error][kind=%s]" %
-                  getattr(error, "kind", type(error).__name__), flush=True)
-        return ""
+                  kind, flush=True)
+            return "", kind
 
     def close(self):
         self.http.close()

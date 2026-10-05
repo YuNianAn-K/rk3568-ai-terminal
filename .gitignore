@@ -4,6 +4,7 @@
 !.env.example
 apps/voice/config/config.py
 local/
+apps/voice/vendor/
 
 # Python caches and local environments
 __pycache__/

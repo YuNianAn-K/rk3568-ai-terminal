@@ -88,6 +88,14 @@ class MiMoASRTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(encoded.split(",")[1]), self.path.read_bytes())
         self.assertTrue(response.closed)
 
+    def test_status_api_distinguishes_timeout_from_no_transcript(self):
+        http, session = transport(requests.Timeout("hidden"))
+        text, kind = MiMoASR(http=http).recognize_with_status(
+            self.path, retries=1, budget=8)
+        self.assertEqual((text, kind), ("", "timeout"))
+        self.assertEqual(session.post.call_count, 1)
+        self.assertEqual(session.post.call_args.kwargs["timeout"], (8 / 3, 4))
+
     @mock.patch("mimo_http.time.sleep")
     def test_timeout_is_bounded_and_redacted(self, sleep):
         http, session = transport(requests.Timeout("credential-must-not-appear"), requests.Timeout())
