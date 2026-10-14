@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import os
+import runpy
 from pathlib import Path
 import struct
 import sys
@@ -69,6 +70,51 @@ def transport(*responses):
     session = mock.Mock()
     session.post.side_effect = responses
     return MiMoHTTP(api_key="offline-placeholder", session=session), session
+
+
+class MiMoModelMigrationTests(unittest.TestCase):
+    def settings(self, **overrides):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"VOICE_LOCAL_CONFIG": str(Path(directory) / "absent.py")}
+            env.update(overrides)
+            with mock.patch.dict(os.environ, env, clear=True):
+                return runpy.run_path(str(Path(__file__).resolve().parents[1] / "config" / "settings.py"))
+
+    def test_default_upgrade_preserves_speech_models_and_disabled_thinking(self):
+        settings = self.settings()
+        self.assertEqual(settings["MIMO_MODEL"], "mimo-v2.6-flash")
+        self.assertEqual(settings["MIMO_ASR_MODEL"], "mimo-v2.5-asr")
+        self.assertEqual(settings["MIMO_TTS_MODEL"], "mimo-v2.5-tts")
+        self.assertEqual(settings["MIMO_THINKING"], "disabled")
+
+    def test_environment_model_override_remains_available_for_rollback(self):
+        self.assertEqual(self.settings(MIMO_MODEL="mimo-v2.5")["MIMO_MODEL"], "mimo-v2.5")
+
+    def test_v26_stream_keeps_only_content_and_sentence_boundaries(self):
+        from main import SentenceAccumulator
+        response = Response(sse(
+            {"choices": [{"delta": {"role": "assistant", "reasoning_content": "not spoken"}}]},
+            {"choices": [{"delta": {"content": "第一"}}]},
+            {"choices": [{"delta": {"content": "句。第二句！"}, "finish_reason": "stop"}]},
+        ), streaming=True)
+        http, session = transport(response)
+        llm = MiMoLLM()
+        llm.http.close()
+        llm.http = http
+        llm.model = "mimo-v2.6-flash"
+        self.addCleanup(llm.close)
+        accum = SentenceAccumulator()
+        sentences = []
+        with mock.patch("config.MIMO_THINKING", "disabled"):
+            for token in llm.chat_stream("合成测试内容"):
+                sentences.extend(accum.feed(token))
+        payload = session.post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "mimo-v2.6-flash")
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertTrue(payload["stream"])
+        self.assertEqual(sentences, ["第一句。", "第二句！"])
+        self.assertEqual(accum.flush(), "")
+        self.assertTrue(response.closed)
 
 
 class MiMoASRTests(unittest.TestCase):

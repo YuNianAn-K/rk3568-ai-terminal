@@ -1,5 +1,5 @@
 """
-MiMo LLM Module - Xiaomi MiMo v2.5 API Integration
+MiMo LLM Module - Xiaomi MiMo Chat Completions API Integration
 """
 from mimo_http import MiMoError, MiMoHTTP, first_choice
 from config import MIMO_API_KEY, MIMO_API_URL, MIMO_MODEL

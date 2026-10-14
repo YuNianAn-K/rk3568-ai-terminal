@@ -56,7 +56,9 @@ python3 -u voice_service.py
 
 ## 配置与安全
 
-默认提供方是 `mimo`，所需模型固定为 `mimo-v2.5-asr`、`mimo-v2.5`、`mimo-v2.5-tts`。同一 `MIMO_API_KEY` 用于三种模型，但账号仍需实际具备对应权限。
+默认提供方是 `mimo`，模型为 `mimo-v2.5-asr`、`mimo-v2.6-flash`、`mimo-v2.5-tts`。
+仅对话模型升级，ASR/TTS 名称保持不变。`MIMO_THINKING=disabled` 保留低延迟流式正文路径；
+环境变量或未提交本地配置中的 `MIMO_MODEL` 可显式覆盖默认值。同一 `MIMO_API_KEY` 用于三种模型，但账号仍需实际具备对应权限。
 
 `config/config.py` 可能包含历史真实凭据，已由仓库根 `.gitignore` 排除。代码只解析其中受支持的标量配置，不执行该文件。新部署优先从 `MIMO_API_KEY` 环境变量取值，也可以通过 `VOICE_LOCAL_CONFIG` 指向一个未提交的本地配置文件。不要打印、复制、提交或覆盖板端本地配置。
 
