@@ -1,15 +1,12 @@
 #include "connmanwificontroller.h"
 
 #include <QCoreApplication>
-#include <QDBusArgument>
-#include <QDBusConnection>
 #include <QDBusError>
 #include <QDBusInterface>
 #include <QDBusMessage>
 #include <QDBusMetaType>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
-#include <QDBusVariant>
 #include <QRegularExpression>
 
 namespace {
@@ -45,34 +42,40 @@ ConnmanAgentAdaptor::ConnmanAgentAdaptor(ConnmanWifiController *controller)
 QVariantMap ConnmanAgentAdaptor::RequestInput(const QDBusObjectPath &service,
                                               const QVariantMap &fields)
 {
-    Q_UNUSED(service)
-    QVariantMap response;
-    if (fields.contains(QStringLiteral("Name")))
-        response.insert(QStringLiteral("Name"), m_controller->agentSsid());
-    if (fields.contains(QStringLiteral("Passphrase")))
-        response.insert(QStringLiteral("Passphrase"),
-                        m_controller->agentPassphrase());
-    return response;
+    return m_controller->handleInputRequest(service, fields);
 }
 
 void ConnmanAgentAdaptor::ReportError(const QDBusObjectPath &service,
                                       const QString &error)
 {
-    Q_UNUSED(service)
-    m_controller->handleAgentError(error);
+    m_controller->handleAgentError(service, error);
 }
 
 void ConnmanAgentAdaptor::Cancel()
 {
-    m_controller->handleAgentError(QStringLiteral("cancelled"));
+    m_controller->handleAgentCancel();
 }
 
 void ConnmanAgentAdaptor::Release()
 {
+    m_controller->handleAgentRelease();
 }
 
 ConnmanWifiController::ConnmanWifiController(QObject *parent)
-    : QObject(parent)
+    : ConnmanWifiController(QDBusConnection::systemBus(),
+                            QString::fromLatin1(kConnmanService), 20000, parent)
+{
+}
+
+ConnmanWifiController::ConnmanWifiController(const QDBusConnection &bus,
+                                             const QString &connmanService,
+                                             int connectionTimeoutMs,
+                                             QObject *parent)
+    : QObject(parent),
+      m_bus(bus),
+      m_connmanService(connmanService),
+      m_serviceWatcher(connmanService, bus,
+                       QDBusServiceWatcher::WatchForOwnerChange, this)
 {
     qRegisterMetaType<ConnmanService>();
     qRegisterMetaType<QList<ConnmanService> >();
@@ -81,27 +84,39 @@ ConnmanWifiController::ConnmanWifiController(QObject *parent)
 
     m_refreshTimer.setInterval(2000);
     connect(&m_refreshTimer, &QTimer::timeout,
-            this, &ConnmanWifiController::refresh);
+            this, &ConnmanWifiController::requestRefresh);
     m_refreshTimer.start();
 
     m_connectionTimeout.setSingleShot(true);
-    m_connectionTimeout.setInterval(20000);
+    m_connectionTimeout.setInterval(connectionTimeoutMs);
     connect(&m_connectionTimeout, &QTimer::timeout,
             this, &ConnmanWifiController::connectionTimedOut);
 
-    QTimer::singleShot(0, this, &ConnmanWifiController::refresh);
+    connect(&m_serviceWatcher, &QDBusServiceWatcher::serviceOwnerChanged,
+            this, &ConnmanWifiController::connmanOwnerChanged);
+    m_bus.connect(m_connmanService, QString::fromLatin1(kManagerPath),
+                  QString::fromLatin1(kManagerInterface),
+                  QStringLiteral("ServicesChanged"), this,
+                  SLOT(servicesChanged(QList<ConnmanService>,QList<QDBusObjectPath>)));
+    m_bus.connect(m_connmanService, QString(),
+                  QString::fromLatin1(kServiceInterface),
+                  QStringLiteral("PropertyChanged"), this,
+                  SLOT(servicePropertyChanged(QString,QDBusVariant)));
+
+    QTimer::singleShot(0, this, &ConnmanWifiController::requestRefresh);
 }
 
 ConnmanWifiController::~ConnmanWifiController()
 {
-    if (!m_agentRegistered)
-        return;
-
-    QDBusInterface manager(kConnmanService, kManagerPath, kManagerInterface,
-                           QDBusConnection::systemBus());
-    manager.call(QStringLiteral("UnregisterAgent"),
-                 QDBusObjectPath(m_agentPath));
-    QDBusConnection::systemBus().unregisterObject(m_agentPath);
+    if (m_agentRegistered) {
+        QDBusInterface manager(m_connmanService,
+                               QString::fromLatin1(kManagerPath),
+                               QString::fromLatin1(kManagerInterface), m_bus);
+        manager.call(QDBus::NoBlock, QStringLiteral("UnregisterAgent"),
+                     QDBusObjectPath(m_agentPath));
+    }
+    if (m_agentObjectRegistered)
+        m_bus.unregisterObject(m_agentPath);
 }
 
 bool ConnmanWifiController::connected() const
@@ -153,16 +168,44 @@ QString ConnmanWifiController::serviceIdFromPath(const QDBusObjectPath &path)
 
 void ConnmanWifiController::refresh()
 {
-    QDBusInterface manager(kConnmanService, kManagerPath, kManagerInterface,
-                           QDBusConnection::systemBus());
+    requestRefresh();
+}
+
+void ConnmanWifiController::requestRefresh()
+{
+    const quint64 generation = ++m_refreshGeneration;
+    QDBusInterface manager(m_connmanService,
+                           QString::fromLatin1(kManagerPath),
+                           QString::fromLatin1(kManagerInterface), m_bus);
     manager.setTimeout(1000);
-    const QDBusMessage reply = manager.call(QStringLiteral("GetServices"));
-    if (reply.type() == QDBusMessage::ErrorMessage || reply.arguments().isEmpty())
+    if (!manager.isValid()) {
+        clearConnectionState();
+        if (!m_busy)
+            setStatusMessage(QStringLiteral("网络服务不可用"));
         return;
+    }
 
-    const QList<ConnmanService> services =
-        qdbus_cast<QList<ConnmanService> >(reply.arguments().constFirst());
+    QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(
+        manager.asyncCall(QStringLiteral("GetServices")), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this,
+            [this, watcher, generation]() {
+        const QDBusPendingReply<QList<ConnmanService> > reply = *watcher;
+        watcher->deleteLater();
+        if (generation != m_refreshGeneration)
+            return;
+        if (reply.isError()) {
+            clearConnectionState();
+            if (!m_busy)
+                setStatusMessage(QStringLiteral("无法读取网络状态"));
+            return;
+        }
+        applyServices(reply.value());
+    });
+}
 
+void ConnmanWifiController::applyServices(
+    const QList<ConnmanService> &services)
+{
     bool nextConnected = false;
     QString nextSsid;
     int nextStrength = 0;
@@ -203,33 +246,58 @@ void ConnmanWifiController::refresh()
         emit strengthChanged();
     }
 
-    if (m_busy && nextConnected && activeServiceId == m_pendingServiceId)
-        finishConnectionSuccess(nextSsid.isEmpty() ? m_pendingSsid : nextSsid);
+    if (m_busy && nextConnected && activeServiceId == m_pendingServiceId) {
+        finishConnectionSuccess(m_activeConnectionGeneration,
+                                nextSsid.isEmpty() ? m_pendingSsid : nextSsid);
+    }
+}
+
+void ConnmanWifiController::clearConnectionState()
+{
+    if (m_connected) {
+        m_connected = false;
+        emit connectedChanged();
+    }
+    if (!m_ssid.isEmpty()) {
+        m_ssid.clear();
+        emit ssidChanged();
+    }
+    if (m_strength != 0) {
+        m_strength = 0;
+        emit strengthChanged();
+    }
 }
 
 bool ConnmanWifiController::ensureAgent()
 {
+    m_agentEverRequested = true;
     if (m_agentRegistered)
         return true;
 
-    m_agentPath = QStringLiteral("/com/alientek/WifiAgent/p%1")
-                      .arg(QCoreApplication::applicationPid());
-    m_agentAdaptor = new ConnmanAgentAdaptor(this);
+    if (m_agentPath.isEmpty()) {
+        m_agentPath = QStringLiteral("/com/alientek/WifiAgent/p%1_c%2")
+                          .arg(QCoreApplication::applicationPid())
+                          .arg(quintptr(this), 0, 16);
+    }
+    if (!m_agentAdaptor)
+        m_agentAdaptor = new ConnmanAgentAdaptor(this);
 
-    QDBusConnection bus = QDBusConnection::systemBus();
-    if (!bus.registerObject(m_agentPath, this,
-                            QDBusConnection::ExportAdaptors)) {
-        return false;
+    if (!m_agentObjectRegistered) {
+        if (!m_bus.registerObject(m_agentPath, this,
+                                  QDBusConnection::ExportAdaptors)) {
+            return false;
+        }
+        m_agentObjectRegistered = true;
     }
 
-    QDBusInterface manager(kConnmanService, kManagerPath, kManagerInterface, bus);
+    QDBusInterface manager(m_connmanService,
+                           QString::fromLatin1(kManagerPath),
+                           QString::fromLatin1(kManagerInterface), m_bus);
     manager.setTimeout(1000);
     const QDBusMessage reply = manager.call(QStringLiteral("RegisterAgent"),
                                              QDBusObjectPath(m_agentPath));
-    if (reply.type() == QDBusMessage::ErrorMessage) {
-        bus.unregisterObject(m_agentPath);
+    if (reply.type() == QDBusMessage::ErrorMessage)
         return false;
-    }
 
     m_agentRegistered = true;
     return true;
@@ -239,18 +307,23 @@ void ConnmanWifiController::connectService(const QString &serviceId,
                                            const QString &networkName,
                                            const QString &passphrase)
 {
+    if (m_busy)
+        return;
+
     static const QRegularExpression servicePattern(
         QStringLiteral("^wifi_[A-Za-z0-9_]+$"));
     if (!servicePattern.match(serviceId).hasMatch()) {
-        finishConnectionFailure(QStringLiteral("网络标识无效，请重新扫描"));
+        rejectConnection(QStringLiteral("网络标识无效，请重新扫描"));
         return;
     }
 
     if (!ensureAgent()) {
-        finishConnectionFailure(QStringLiteral("无法注册 ConnMan 密码代理"));
+        rejectConnection(QStringLiteral("无法注册 ConnMan 密码代理"));
         return;
     }
 
+    const quint64 generation = ++m_connectionGeneration;
+    m_activeConnectionGeneration = generation;
     m_pendingServiceId = serviceId;
     m_pendingSsid = networkName;
     m_agentPassphrase = passphrase;
@@ -259,48 +332,147 @@ void ConnmanWifiController::connectService(const QString &serviceId,
     m_connectionTimeout.start();
 
     const QString path = QStringLiteral("/net/connman/service/%1").arg(serviceId);
-    QDBusInterface service(kConnmanService, path, kServiceInterface,
-                           QDBusConnection::systemBus());
-    service.setTimeout(20000);
+    QDBusInterface service(m_connmanService, path,
+                           QString::fromLatin1(kServiceInterface), m_bus);
+    // The UI timeout is intentionally shorter in tests and may finish first.
+    // Keep the D-Bus call alive so its eventual reply is generation-checked.
+    service.setTimeout(qMax(m_connectionTimeout.interval(), 20000));
     QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(
         service.asyncCall(QStringLiteral("Connect")), this);
 
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
-            [this, watcher]() {
+            [this, watcher, generation]() {
         const QDBusPendingReply<> reply = *watcher;
         watcher->deleteLater();
+        if (!m_busy || generation != m_activeConnectionGeneration)
+            return;
         if (!reply.isError()) {
-            refresh();
+            requestRefresh();
             return;
         }
 
         const QString errorName = reply.error().name();
         if (errorName.endsWith(QStringLiteral("AlreadyConnected")) ||
             errorName.endsWith(QStringLiteral("InProgress"))) {
-            refresh();
+            requestRefresh();
             return;
         }
 
         if (errorName.contains(QStringLiteral("InvalidKey"),
                                Qt::CaseInsensitive)) {
-            finishConnectionFailure(QStringLiteral("密码错误，请重新输入"));
+            finishConnectionFailure(generation,
+                                    QStringLiteral("密码错误，请重新输入"));
         } else {
-            finishConnectionFailure(QStringLiteral("连接失败，请检查密码和信号"));
+            finishConnectionFailure(generation,
+                                    QStringLiteral("连接失败，请检查密码和信号"));
         }
     });
 }
 
-void ConnmanWifiController::handleAgentError(const QString &error)
+QVariantMap ConnmanWifiController::handleInputRequest(
+    const QDBusObjectPath &service, const QVariantMap &fields) const
 {
-    if (!m_busy)
+    QVariantMap response;
+    if (!m_busy || !isPendingService(service))
+        return response;
+    if (fields.contains(QStringLiteral("Name")))
+        response.insert(QStringLiteral("Name"), m_pendingSsid);
+    if (fields.contains(QStringLiteral("Passphrase")))
+        response.insert(QStringLiteral("Passphrase"), m_agentPassphrase);
+    return response;
+}
+
+void ConnmanWifiController::handleAgentError(const QDBusObjectPath &service,
+                                             const QString &error)
+{
+    if (!m_busy || !isPendingService(service))
         return;
 
     if (error.contains(QStringLiteral("key"), Qt::CaseInsensitive) ||
         error.contains(QStringLiteral("pass"), Qt::CaseInsensitive)) {
-        finishConnectionFailure(QStringLiteral("密码错误，请重新输入"));
+        finishConnectionFailure(m_activeConnectionGeneration,
+                                QStringLiteral("密码错误，请重新输入"));
     } else {
-        finishConnectionFailure(QStringLiteral("连接失败，请重试"));
+        finishConnectionFailure(m_activeConnectionGeneration,
+                                QStringLiteral("连接失败，请重试"));
     }
+}
+
+void ConnmanWifiController::handleAgentCancel()
+{
+    if (m_busy) {
+        finishConnectionFailure(m_activeConnectionGeneration,
+                                QStringLiteral("连接已取消"));
+    }
+}
+
+void ConnmanWifiController::handleAgentRelease()
+{
+    m_agentRegistered = false;
+    if (m_busy) {
+        finishConnectionFailure(m_activeConnectionGeneration,
+                                QStringLiteral("网络服务已重启，请重试"));
+    }
+}
+
+bool ConnmanWifiController::isPendingService(
+    const QDBusObjectPath &service) const
+{
+    return service.path() ==
+           QStringLiteral("/net/connman/service/%1").arg(m_pendingServiceId);
+}
+
+void ConnmanWifiController::servicesChanged(
+    const QList<ConnmanService> &changed,
+    const QList<QDBusObjectPath> &removed)
+{
+    Q_UNUSED(changed)
+    Q_UNUSED(removed)
+    requestRefresh();
+}
+
+void ConnmanWifiController::servicePropertyChanged(const QString &name,
+                                                   const QDBusVariant &value)
+{
+    Q_UNUSED(value)
+    if (name == QStringLiteral("State") ||
+        name == QStringLiteral("Strength") ||
+        name == QStringLiteral("Name") ||
+        name == QStringLiteral("Error")) {
+        requestRefresh();
+    }
+}
+
+void ConnmanWifiController::connmanOwnerChanged(const QString &service,
+                                                const QString &oldOwner,
+                                                const QString &newOwner)
+{
+    if (service != m_connmanService)
+        return;
+
+    ++m_refreshGeneration;
+    m_agentRegistered = false;
+    if (!oldOwner.isEmpty() && m_busy) {
+        finishConnectionFailure(m_activeConnectionGeneration,
+                                QStringLiteral("网络服务已重启，请重试"));
+    }
+
+    if (newOwner.isEmpty()) {
+        clearConnectionState();
+        if (!m_busy)
+            setStatusMessage(QStringLiteral("网络服务不可用"));
+        return;
+    }
+
+    if (m_agentEverRequested && !ensureAgent()) {
+        if (m_busy) {
+            finishConnectionFailure(m_activeConnectionGeneration,
+                                    QStringLiteral("无法注册 ConnMan 密码代理"));
+        } else {
+            setStatusMessage(QStringLiteral("无法注册 ConnMan 密码代理"));
+        }
+    }
+    requestRefresh();
 }
 
 void ConnmanWifiController::setBusy(bool busy)
@@ -319,27 +491,44 @@ void ConnmanWifiController::setStatusMessage(const QString &message)
     emit statusMessageChanged();
 }
 
-void ConnmanWifiController::finishConnectionSuccess(const QString &networkName)
+void ConnmanWifiController::invalidateConnection()
 {
-    if (!m_busy)
-        return;
     m_connectionTimeout.stop();
-    setBusy(false);
+    m_activeConnectionGeneration = 0;
+    m_pendingServiceId.clear();
+    m_pendingSsid.clear();
     m_agentPassphrase.clear();
+    setBusy(false);
+}
+
+void ConnmanWifiController::rejectConnection(const QString &message)
+{
+    setStatusMessage(message);
+    emit connectionFailed(message);
+}
+
+void ConnmanWifiController::finishConnectionSuccess(
+    quint64 generation, const QString &networkName)
+{
+    if (!m_busy || generation != m_activeConnectionGeneration)
+        return;
+    invalidateConnection();
     setStatusMessage(QStringLiteral("已连接 %1").arg(networkName));
     emit connectionSucceeded(networkName);
 }
 
-void ConnmanWifiController::finishConnectionFailure(const QString &message)
+void ConnmanWifiController::finishConnectionFailure(
+    quint64 generation, const QString &message)
 {
-    m_connectionTimeout.stop();
-    setBusy(false);
-    m_agentPassphrase.clear();
+    if (!m_busy || generation != m_activeConnectionGeneration)
+        return;
+    invalidateConnection();
     setStatusMessage(message);
     emit connectionFailed(message);
 }
 
 void ConnmanWifiController::connectionTimedOut()
 {
-    finishConnectionFailure(QStringLiteral("连接超时，请检查密码和信号"));
+    finishConnectionFailure(m_activeConnectionGeneration,
+                            QStringLiteral("连接超时，请检查密码和信号"));
 }

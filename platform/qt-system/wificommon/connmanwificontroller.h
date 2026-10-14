@@ -3,7 +3,10 @@
 
 #include <QDBusAbstractAdaptor>
 #include <QDBusArgument>
+#include <QDBusConnection>
 #include <QDBusObjectPath>
+#include <QDBusServiceWatcher>
+#include <QDBusVariant>
 #include <QObject>
 #include <QTimer>
 #include <QVariantMap>
@@ -52,6 +55,10 @@ class ConnmanWifiController : public QObject
 
 public:
     explicit ConnmanWifiController(QObject *parent = nullptr);
+    ConnmanWifiController(const QDBusConnection &bus,
+                          const QString &connmanService,
+                          int connectionTimeoutMs,
+                          QObject *parent = nullptr);
     ~ConnmanWifiController() override;
 
     bool connected() const;
@@ -67,7 +74,12 @@ public:
 
     QString agentSsid() const;
     QString agentPassphrase() const;
-    void handleAgentError(const QString &error);
+    QVariantMap handleInputRequest(const QDBusObjectPath &service,
+                                   const QVariantMap &fields) const;
+    void handleAgentError(const QDBusObjectPath &service,
+                          const QString &error);
+    void handleAgentCancel();
+    void handleAgentRelease();
 
 signals:
     void connectedChanged();
@@ -80,13 +92,28 @@ signals:
 
 private slots:
     void connectionTimedOut();
+    void connmanOwnerChanged(const QString &service,
+                             const QString &oldOwner,
+                             const QString &newOwner);
+    void servicesChanged(const QList<ConnmanService> &changed,
+                         const QList<QDBusObjectPath> &removed);
+    void servicePropertyChanged(const QString &name,
+                                const QDBusVariant &value);
 
 private:
     bool ensureAgent();
+    void requestRefresh();
+    void applyServices(const QList<ConnmanService> &services);
+    void clearConnectionState();
+    void invalidateConnection();
+    void rejectConnection(const QString &message);
+    bool isPendingService(const QDBusObjectPath &service) const;
     void setBusy(bool busy);
     void setStatusMessage(const QString &message);
-    void finishConnectionSuccess(const QString &networkName);
-    void finishConnectionFailure(const QString &message);
+    void finishConnectionSuccess(quint64 generation,
+                                 const QString &networkName);
+    void finishConnectionFailure(quint64 generation,
+                                 const QString &message);
     static QVariant unwrapped(const QVariant &value);
     static QString serviceIdFromPath(const QDBusObjectPath &path);
 
@@ -101,6 +128,14 @@ private:
     QString m_agentPath;
     ConnmanAgentAdaptor *m_agentAdaptor = nullptr;
     bool m_agentRegistered = false;
+    bool m_agentObjectRegistered = false;
+    bool m_agentEverRequested = false;
+    quint64 m_connectionGeneration = 0;
+    quint64 m_activeConnectionGeneration = 0;
+    quint64 m_refreshGeneration = 0;
+    QDBusConnection m_bus;
+    QString m_connmanService;
+    QDBusServiceWatcher m_serviceWatcher;
     QTimer m_refreshTimer;
     QTimer m_connectionTimeout;
 };
