@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#122b27">
+  <title>RK3568 · 手机控制台</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="vendor/mqtt.min.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main>
+    <header><div class="brand">RK3568 <span>REMOTE</span></div><span id="badge" class="badge">未连接</span></header>
+    <section class="intro"><p class="eyebrow" id="eyebrow">手机控制台 · 只读查询</p><h1 id="heading">让设备回应你。</h1><p id="intro">可测试消息，或用专用账号查询真实设备的系统状态。</p></section>
+    <section class="card">
+      <div class="section-title"><h2>连接设备</h2><span class="tag">加密连接</span></div>
+      <form id="connect-form">
+        <label>连接用途<select id="mode"><option value="echo">消息与电脑模拟测试</option><option value="device">真实设备状态 · 只读</option></select></label>
+        <label id="device-field" hidden>设备 ID<input id="device-id" value="rk3568-01" maxlength="48" autocomplete="off" spellcheck="false"></label>
+        <label>云端地址<input id="broker" type="url" required placeholder="wss://你的部署域名:8084/mqtt" autocomplete="off" spellcheck="false"></label>
+        <div class="fields"><label>用户名<input id="username" required autocomplete="off" spellcheck="false"></label><label>MQTT 密码<input id="password" type="password" required autocomplete="off"></label></div>
+        <p class="hint" id="account-hint">使用 MQTT 测试账号密码。密码仅用于本次连接，不保存。</p>
+        <button id="connect" type="submit" class="primary">连接云端</button>
+      </form>
+      <button id="disconnect" class="secondary" hidden>断开连接</button>
+      <p id="notice" class="notice" role="status" aria-live="polite">填写密码后连接。</p>
+    </section>
+    <section class="card" id="actions">
+      <div class="section-title"><h2 id="action-heading">试着发一条消息</h2><span id="action-tag" class="tag">echo 测试</span></div>
+      <button id="hello" class="action" disabled><span class="action-icon">↗</span><span><strong>发送问候</strong><small>在电脑 MQTTX 中查看消息</small></span><span>→</span></button>
+      <button id="query" class="action" disabled><span class="action-icon">⌁</span><span><strong id="query-title">查询模拟终端</strong><small id="query-hint">需要电脑模拟端保持连接</small></span><span>→</span></button>
+      <div id="device-status" class="result" hidden aria-live="polite">尚未收到真实设备状态。</div>
+      <div id="result" class="result" aria-live="polite">暂未查询。当前没有连接真实开发板。</div>
+    </section>
+    <section class="card">
+      <div class="section-title"><h2>消息记录</h2><button id="clear" class="text-button">清空</button></div>
+      <ol id="messages"><li class="empty">收到的消息会显示在这里。</li></ol>
+    </section>
+    <footer><p id="topic-hint">测试主题 rk3568/test/echo · QoS 1</p><p>真实设备模式只查询系统状态。摄像头与硬件控制尚未接入。</p><a id="role-link" href="?role=simulator">在电脑上打开模拟端 →</a></footer>
+  </main>
+</body>
+</html>

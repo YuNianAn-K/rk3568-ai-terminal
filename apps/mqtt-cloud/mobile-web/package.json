@@ -1,0 +1,7 @@
+{
+  "name": "rk3568-mobile-mqtt",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.mjs", "test": "node --test tests/*.test.mjs" },
+  "mqttBrowserBundle": { "version": "5.16.0", "source": "https://registry.npmjs.org/mqtt/-/mqtt-5.16.0.tgz", "integrity": "sha512-G0VsEtuJz5sJUgZJaaADMVfW7SIFPzkIuHR+d6rk+tBeSwdCfd9BaIRycRfd2AbyFDEmLlFM+SDQeti/+IbOnw==" }
+}

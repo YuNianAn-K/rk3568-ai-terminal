@@ -1,0 +1,8 @@
+{
+  "host": "your-deployment.example.com",
+  "port": 8883,
+  "username": "device-rk3568-01",
+  "device_id": "rk3568-01",
+  "controller_ids": ["phone-owner"],
+  "ca_file": "/opt/rk3568-mqtt-status/ca.crt"
+}
