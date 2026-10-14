@@ -51,12 +51,16 @@ int main(int argc, char **argv)
     bridge.personSample(.2, .3, .72, now - 150, now);
     check(waitFor([&]() { return commands().contains("PERSON 0.2000 0.3000 0.720 0 "); }), "real score and timing forwarded");
     const int samples = commands().count("PERSON ");
+    bridge.personPause();
+    check(waitFor([&]() { return commands().contains("PERSON_PAUSE\n"); }), "pause forwarded");
+    bridge.personSample(.2, .3, .45, stamp(), stamp());
+    check(waitFor([&]() { return commands().contains("PERSON 0.2000 0.3000 0.450 0 "); }), "weak associated sample forwarded");
     bridge.personSample(.2, .3, .72, now - 600, now);
     check(ended == 1, "stale result ends tracking");
     check(waitFor([&]() { return commands().contains("STOP\n"); }), "stale result requests stop");
     bridge.personSample(.2, .3, .72, stamp(), stamp());
     QThread::msleep(30);
-    check(commands().count("PERSON ") == samples, "no automatic restart");
+    check(commands().count("PERSON ") == samples + 1, "no automatic restart");
     bridge.personStart();
     bridge.personSample(std::numeric_limits<double>::quiet_NaN(), .3, .72, stamp(), stamp());
     check(ended == 2, "non-finite coordinate ends tracking");

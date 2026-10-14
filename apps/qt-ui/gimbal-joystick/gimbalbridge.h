@@ -31,6 +31,7 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void center();
     Q_INVOKABLE void personStart(const QString &requestId = QString());
+    Q_INVOKABLE void personPause();
     void requestStop(const QString &requestId);
     Q_INVOKABLE void personSample(double x, double y, double score,
                                   qint64 probeMs, qint64 resultMs);

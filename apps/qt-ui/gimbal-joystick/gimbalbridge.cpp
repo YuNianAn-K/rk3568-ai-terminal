@@ -127,6 +127,12 @@ void GimbalBridge::setPersonArmed(bool armed)
     emit personArmedChanged();
 }
 
+void GimbalBridge::personPause()
+{
+    if (m_personTracking && m_connected)
+        send("PERSON_PAUSE\n");
+}
+
 void GimbalBridge::personSample(double x, double y, double score,
                                 qint64 probeMs, qint64 resultMs)
 {
@@ -136,8 +142,8 @@ void GimbalBridge::personSample(double x, double y, double score,
     clock.start();
     const qint64 now = clock.msecsSinceReference();
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(score) ||
-        x <= 0.05 || x >= 0.95 || y <= 0.05 || y >= 0.95 ||
-        score < 0.55 || score > 1 || probeMs <= 0 ||
+        x <= 0 || x >= 1 || y <= 0 || y >= 1 ||
+        score < 0.40 || score > 1 || probeMs <= 0 ||
         resultMs < probeMs || now < resultMs || now - probeMs > 500) {
         stop();
         emit trackingEnded();
@@ -248,6 +254,8 @@ void GimbalBridge::processOutput()
                 emit controlAck(data.value(QStringLiteral("request_id")).toString(), QStringLiteral("off"));
         } else if (event == QStringLiteral("tracking")) {
             const QString state = data.value(QStringLiteral("state")).toString();
+            if (state != QStringLiteral("active") || !data.contains(QStringLiteral("pulse")))
+                qInfo().noquote() << "GIMBAL_STATE" << QString::fromUtf8(line);
             if (state == QStringLiteral("active")) {
                 if (m_personTracking && data.value(QStringLiteral("request_id")).toString() == m_personRequestId) {
                     setPersonArmed(true);
@@ -256,6 +264,9 @@ void GimbalBridge::processOutput()
                 setStatus(m_personTracking ? QStringLiteral("跟人中 · 双轴平滑修正") :
                           QStringLiteral("跟手中 · 双轴平滑修正"));
                 setDetail(data.value(QStringLiteral("pulse")).toString());
+            } else if (state == QStringLiteral("paused")) {
+                setPersonArmed(false);
+                setStatus(QStringLiteral("人物暂时不可见 · 暂停等待"));
             } else if (state == QStringLiteral("lost")) {
                 setStatus(m_personTracking ? QStringLiteral("人物目标丢失 · 已停止") :
                           QStringLiteral("跟手目标丢失 · 已停止"));

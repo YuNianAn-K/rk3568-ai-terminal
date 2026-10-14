@@ -15,6 +15,7 @@ Item {
         model: overlay.detections
         delegate: Rectangle {
             objectName: "personBox" + index
+            visible: modelData.score >= 0.40 || index === overlay.selectedIndex
             x: overlay.imageLeft + modelData.left * overlay.imageWidth
             y: overlay.imageTop + modelData.top * overlay.imageHeight
             width: (modelData.right - modelData.left) * overlay.imageWidth
@@ -29,7 +30,8 @@ Item {
                 Text {
                     id: label
                     anchors.centerIn: parent
-                    text: (index === overlay.selectedIndex ? "目标 " : "人物 ") +
+                    text: (index === overlay.selectedIndex ? "目标 " :
+                           modelData.score >= 0.70 ? "人物 " : "候选 ") +
                           Math.round(modelData.score * 100) + "%"
                     color: "white"
                     font.pixelSize: 18
@@ -37,6 +39,7 @@ Item {
             }
             MouseArea {
                 anchors.fill: parent
+                enabled: modelData.score >= 0.55
                 onClicked: overlay.selected(index)
             }
         }

@@ -50,6 +50,10 @@ class Bridge(QObject):
         self.changed.emit()
     @Slot(str)
     def personStart(self, request_id): self.starts += 1
+    @Slot()
+    def personPause(self):
+        self.armed = False
+        self.changed.emit()
     @Slot(float, float, float, int, int)
     def personSample(self, x, y, score, probe, result):
         self.samples.append((x, y, score, probe, result))
@@ -127,12 +131,13 @@ class Person(QObject):
     status = Property(str, lambda self: "人物：检测中" if self.enabled else "人物：已停止", notify=activeChanged)
     metrics = Property(str, lambda self: "布局测试 · 输入为模拟框", constant=True)
     resultProbeMs = Property(int, lambda self: 1000, constant=True)
-    resultMs = Property(int, lambda self: 1150, constant=True)
+    resultMs = Property(int, lambda self: self.stamp, notify=detectionsChanged)
     resultFresh = Property(bool, lambda self: True, constant=True)
     def __init__(self):
         super().__init__()
         self.boxes = []
         self.enabled = True
+        self.stamp = 1000
     detections = Property('QVariantList', lambda self: self.boxes, notify=detectionsChanged)
     @Slot()
     def start(self):
@@ -144,6 +149,7 @@ class Person(QObject):
             self.enabled = False
             self.activeChanged.emit()
     def set_boxes(self, boxes):
+        self.stamp += 150
         self.boxes = boxes
         self.detectionsChanged.emit()
 
@@ -197,8 +203,43 @@ def main():
         value = window.property("personTarget")
         return value.toVariant() if hasattr(value, "toVariant") else value
 
+    def visual_item(name):
+        # Repeater delegates belong to the visual tree, not necessarily the
+        # window's QObject ownership tree.
+        pending = [window.contentItem()]
+        while pending:
+            item = pending.pop()
+            if item.objectName() == name:
+                return item
+            pending.extend(item.childItems())
+        return None
+
     def run():
         try:
+            # Reproduce the 70% display regression: ordinary 60% detections
+            # must be visible without automatically selecting or moving.
+            bridge = mocks["gimbalBridge"]
+            person.set_boxes([dict(a, score=.60)])
+            QTest.qWait(100)
+            box = visual_item("personBox0")
+            assert box and box.property("visible"), "60% candidate was hidden"
+            assert window.property("visiblePersonCount") == 1
+            assert state()["state"] == "candidate" and bridge.starts == 0
+            capture("candidate_60")
+            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
+                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(220, 220))
+            assert state()["state"] == "selected" and state()["box"]["score"] == .60
+            assert bridge.starts == 0
+            person.stop()
+            person.start()
+            person.set_boxes([dict(a, score=.45)])
+            QTest.qWait(100)
+            box = visual_item("personBox0")
+            assert box and box.property("visible"), "weak candidate was hidden"
+            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
+                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(220, 220))
+            assert state()["state"] == "candidate" and bridge.starts == 0
+            capture("candidate_45")
             person.set_boxes([a, b])
             QTest.qWait(100)
             assert state()["state"] == "multiple", state()
@@ -214,9 +255,43 @@ def main():
                              __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 820))
             assert window.property("personFollowing") and bridge.starts == 1
             person.set_boxes([a, b])
-            assert bridge.samples[-1] == (.25, .475, .91, 1000, 1150)
+            assert bridge.samples[-1] == (.25, .475, .91, 1000, person.stamp)
             capture("following")
             stopped = bridge.stops
+            samples_before = len(bridge.samples)
+            person.set_boxes([a, dict(a, left=.11)])
+            assert state()["state"] == "recovering" and state()["reason"] == "ambiguous"
+            assert window.property("personFollowing") and bridge.stops == stopped
+            assert len(bridge.samples) == samples_before
+            assert "重叠" in window.property("personHint")
+            capture("ambiguous")
+            person.set_boxes([a, b])
+            assert state()["state"] == "selected" and len(bridge.samples) == samples_before + 1
+            partial = dict(a, bottom=.40)
+            samples_before = len(bridge.samples)
+            person.set_boxes([partial])
+            assert state()["state"] == "recovering" and state()["reason"] == "geometry"
+            assert len(bridge.samples) == samples_before and bridge.stops == stopped
+            assert "重新确认" in window.property("personHint")
+            capture("geometry")
+            person.set_boxes([partial])
+            assert state()["state"] == "selected"
+            samples_before = len(bridge.samples)
+            person.set_boxes([a])
+            assert state()["state"] == "selected" and window.property("personFollowing")
+            assert len(bridge.samples) == samples_before + 1 and bridge.stops == stopped
+            assert bridge.samples[-1] == (.25, .475, .91, 1000, person.stamp)
+            capture("shape_return")
+            person.set_boxes([a])
+            assert state()["state"] == "selected" and window.property("personFollowing")
+            person.set_boxes([])
+            assert state()["state"] == "recovering", state()
+            assert window.property("personFollowing") and bridge.stops == stopped
+            capture("recovering")
+            person.set_boxes([dict(a, score=.45), b])
+            assert state()["state"] == "selected" and bridge.samples[-1][2] == .45
+            person.set_boxes([])
+            person.stamp += 900
             person.set_boxes([])
             assert state()["state"] == "lost", state()
             assert not window.property("personFollowing") and bridge.stops > stopped
@@ -239,6 +314,8 @@ def main():
             bridge.trackingEnded.emit()
             assert not window.property("personFollowing")
             control = mocks["trackingControl"]
+            person.set_boxes([])
+            person.stamp += 900
             person.set_boxes([])
             person.set_boxes([a, b])
             control.request.emit("START_TRACKING", "a" * 32)

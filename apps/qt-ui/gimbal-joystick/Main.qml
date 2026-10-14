@@ -18,6 +18,12 @@ Window {
     property bool emergencyStopped: false
     property var personTarget: PersonTargets.empty()
     property bool personFollowing: false
+    property int visiblePersonCount: {
+        var count = 0
+        for (var i = 0; i < personTracker.detections.length; ++i)
+            if (personTracker.detections[i].score >= 0.40 || i === personTarget.index) ++count
+        return count
+    }
     property bool voiceOwned: false
     property bool voiceNotice: false
     property bool autoVoice: voiceBridge.state === "recording" && voiceBridge.message.indexOf("自动结束") >= 0
@@ -25,10 +31,16 @@ Window {
     property string personHint: !cameraReady ? "请先连接摄像头，等待实时画面" :
         !gimbalBridge.connected ? "云台控制未连接，请等待恢复" :
         !gimbalBridge.positionReady ? "先关闭人物检测，点回中位，再重新开启检测" :
-        personFollowing ? (gimbalBridge.personArmed ? "正在跟随 · 目标丢失会停止" : "正在确认目标，请保持在画面内") :
+        personFollowing ? (personTarget.state === "recovering" ?
+                          (personTarget.reason === "ambiguous" ? "目标框重叠 · 暂停运动，等待分离" :
+                           personTarget.reason === "geometry" ? "人物框变化 · 暂停运动，重新确认" :
+                           "短暂漏检 · 暂停运动，等待目标恢复") :
+                          gimbalBridge.personArmed ? "正在跟随 · 短暂漏检可恢复" : "正在确认目标，请保持在画面内") :
         personTarget.state === "selected" ? "目标已选，可点开始跟随或使用语音指令" :
         personTarget.state === "lost" ? "目标已丢失，请点人物框重新选择，再开始跟随" :
         personTarget.state === "multiple" ? "检测到多人，请点画面中的人物框选择目标" :
+        personTarget.state === "candidate" ? "检测到候选 · 可点较清晰的框选择，低分框请靠近镜头" :
+        personTarget.state === "confirming" ? "正在确认人物，请保持在画面内" :
         "请站到镜头前，单人出现后自动选择"
     property string voiceLabel: !voiceBridge.connected ? "语音未连接" :
         (voiceOwned || autoVoice) && voiceBridge.state === "recording" ? "结束录音" :
@@ -107,9 +119,20 @@ Window {
             window.personTarget = PersonTargets.empty()
         }
         function onDetectionsChanged() {
-            window.personTarget = PersonTargets.update(window.personTarget, personTracker.detections)
+            var previousTarget = window.personTarget
+            window.personTarget = PersonTargets.update(window.personTarget, personTracker.detections, personTracker.resultMs)
+            if (window.personFollowing && (previousTarget.state !== window.personTarget.state ||
+                    previousTarget.reason !== window.personTarget.reason))
+                console.log("PERSON_ASSOCIATION " + JSON.stringify({
+                    state: window.personTarget.state, reason: window.personTarget.reason || "",
+                    result_ms: personTracker.resultMs, index: window.personTarget.index}))
             if (!window.personFollowing) return
+            if (window.personTarget.state === "recovering") {
+                gimbalBridge.personPause()
+                return
+            }
             if (window.personTarget.state !== "selected") {
+                console.log("PERSON_FOLLOW_STOP target=" + window.personTarget.state)
                 window.stopPersonFollow()
                 return
             }
@@ -397,7 +420,7 @@ Window {
         Text {
             x: 40; y: 738; width: 640
             visible: personTracker.active
-            text: "人物跟随 · " + personTracker.detections.length + " 人入镜"
+            text: "人物跟随 · " + window.visiblePersonCount + " 个候选"
             color: "#91a5b6"; font.pixelSize: 20
             horizontalAlignment: Text.AlignHCenter
         }

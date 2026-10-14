@@ -19,6 +19,9 @@ HOLD_SECONDS = 1.2
 SETTLE_SECONDS = 0.25
 HAND_LOSS_SECONDS = 1.4
 TRACK_INTERVAL_SECONDS = 0.10
+PERSON_TICK_SECONDS = 0.06
+PERSON_RECOVERY_SECONDS = 0.9
+PERSON_CONFIRM_SECONDS = 0.6
 TRACK_STEP_US = 80
 TRACK_MAX_LEAD_US = 240
 TRACK_GAIN_US = 800
@@ -154,7 +157,19 @@ def frame_target(pulse, error):
     return pulse + error * TRACK_GAIN_US
 
 
-def track_axis(fd, axis, actual, target, error, desired_target=None):
+def smooth_person_target(previous, desired, interval_seconds):
+    """Filter absolute PWM destinations, never integrate held image error.
+
+    A 200 ms time constant damps frame-to-frame box jitter at the measured
+    5 Hz rate. Resetting on pause avoids dragging a stale destination forward.
+    """
+    if previous is None:
+        return desired
+    alpha = 1 - math.exp(-max(0.0, interval_seconds) / 0.20)
+    return previous + alpha * (desired - previous)
+
+
+def track_axis(fd, axis, actual, target, error, desired_target=None, max_steps=3):
     minimum, maximum = (500, 2500) if axis == "PAN" else (750, 2250)
     if abs(error) <= TRACK_DEADZONE:
         error = 0.0
@@ -171,7 +186,7 @@ def track_axis(fd, axis, actual, target, error, desired_target=None):
     moved = False
     threshold = TRACK_STEP_US // 2 if desired_target is None else (
         TRACK_DEADZONE * TRACK_GAIN_US)
-    for _ in range(TRACK_MAX_LEAD_US // TRACK_STEP_US):
+    for _ in range(min(max_steps, TRACK_MAX_LEAD_US // TRACK_STEP_US)):
         if desired >= target + threshold:
             delta, sign = TRACK_STEP_US, "+"
         elif desired <= target - threshold:
@@ -255,6 +270,8 @@ class InputReader:
             return "STOP"
         if "TRACK_STOP" in commands:
             return "TRACK_STOP"
+        if "PERSON_PAUSE" in commands:
+            return "PERSON_PAUSE"
         return commands[-1]
 
 
@@ -288,9 +305,15 @@ def main():
         pose_history = deque(maxlen=32)
         filtered_pan_target = filtered_tilt_target = None
         pan_target = tilt_target = 1500
+        paused_at = None
+        recovery_confirm_at = None
+        person_probe_ms = None
         while True:
             timeout = 0.05 if active_until is None else max(
                 0.0, min(0.05, active_until - time.monotonic()))
+            if tracking and person_mode and armed:
+                timeout = min(timeout, max(0, PERSON_TICK_SECONDS -
+                                          (time.monotonic() - last_track_command)))
             command = pending if pending is not None else reader.latest(timeout)
             pending = None
             now = time.monotonic()
@@ -307,11 +330,15 @@ def main():
                     command = "PERSON_START"
 
             if command not in ("QUIT", "STOP", "TRACK_STOP") and tracking and ((last_hand is None and now - started_at > 6.0) or
+                             (person_mode and paused_at is not None and
+                              ((recovery_confirm_at is None and now - paused_at >= PERSON_RECOVERY_SECONDS) or
+                               (recovery_confirm_at is not None and now - recovery_confirm_at >= PERSON_CONFIRM_SECONDS))) or
                              (armed and last_hand is not None and
-                              now - last_hand > (0.6 if person_mode else HAND_LOSS_SECONDS))):
+                              not person_mode and now - last_hand > HAND_LOSS_SECONDS)):
                 stop(fd)
                 tracking = armed = False
-                emit("tracking", state="lost", request_id=person_request_id if person_mode else "")
+                emit("tracking", state="lost", reason="target_timeout",
+                     request_id=person_request_id if person_mode else "")
                 continue
             if command == "QUIT":
                 break
@@ -326,6 +353,26 @@ def main():
                 if track_capable:
                     emit("position", ready=saved_position(fd) is not None)
                 continue
+            # A held target is never extended beyond its original frame age.
+            # Missing association and stale frames turn PWM off while retaining
+            # the session for a bounded, fresh-sample reacquisition.
+            if tracking and person_mode and (command == "PERSON_PAUSE" or
+                    (armed and person_probe_ms is not None and now * 1000 - person_probe_ms > 500)):
+                if paused_at is None:
+                    stop(fd)
+                    armed = False
+                    paused_at = now
+                    recovery_confirm_at = None
+                    recent_hand.clear()
+                    filtered_pan_target = filtered_tilt_target = None
+                    pose_history.clear()
+                    emit("tracking", state="paused", reason="missing_or_stale",
+                         request_id=person_request_id)
+                if command == "PERSON_PAUSE":
+                    # All three confirmation samples must be uninterrupted.
+                    # Do not restart either bounded deadline on another miss.
+                    recent_hand.clear()
+                    continue
             if command == "CENTER":
                 stop(fd)
                 tracking = armed = False
@@ -346,6 +393,9 @@ def main():
                 filtered_x = filtered_y = None
                 pose_history.clear()
                 filtered_pan_target = filtered_tilt_target = None
+                paused_at = None
+                recovery_confirm_at = None
+                person_probe_ms = None
                 if position is not None:
                     pan_target, tilt_target = position
                 emit("position", ready=position is not None)
@@ -374,8 +424,9 @@ def main():
                         raise SerialFailure("手部检测计时格式错误") from error
                 valid = (parts[4] == "0" and
                          all(math.isfinite(value) for value in (x, y, score)) and
-                         (0.55 if person_mode else 0.80) <= score <= 1 and
-                         0.05 < x < 0.95 and 0.05 < y < 0.95)
+                         (0.40 if person_mode else 0.80) <= score <= 1 and
+                         (0 < x < 1 and 0 < y < 1 if person_mode else
+                          0.05 < x < 0.95 and 0.05 < y < 0.95))
                 if person_mode:
                     valid = (valid and probe_ms is not None and result_ms is not None and
                              0 < probe_ms <= result_ms <= now * 1000 and
@@ -389,11 +440,21 @@ def main():
                     if person_mode:
                         stop(fd)
                         tracking = armed = False
-                        emit("tracking", state="lost", request_id=person_request_id)
+                        emit("tracking", state="lost", reason="invalid_sample", request_id=person_request_id)
                     if parts[4] != "0":
                         recent_hand.clear()
                     continue
+                if person_mode and person_probe_ms is not None and probe_ms <= person_probe_ms:
+                    continue
+                sample_interval = now - last_hand if last_hand is not None else 0
                 last_hand = now
+                if person_mode:
+                    person_probe_ms = probe_ms
+                    if paused_at is not None and recovery_confirm_at is None:
+                        # A valid associated target returned within the search
+                        # window. Give its three fresh samples their own fixed
+                        # budget, with PWM still OFF until ARM is confirmed.
+                        recovery_confirm_at = now
                 filtered_x, filtered_y = x, y
                 recent_hand.append(now)
                 while recent_hand and now - recent_hand[0] > 1.2:
@@ -406,13 +467,15 @@ def main():
                         raise SerialFailure("位置尚未初始化，请先回中位")
                     require(fd, "TRK ARM", "TRK=ARMED")
                     armed = True
+                    paused_at = None
+                    recovery_confirm_at = None
                     pan_target, tilt_target = position
                     last_track_command = now - TRACK_INTERVAL_SECONDS
                     emit("tracking", state="active", request_id=person_request_id if person_mode else "")
                     if TIMING:
                         emit("timing", type="armed", at_ms=round(time.monotonic() * 1000, 3),
                              from_start_ms=round((time.monotonic() - started_at) * 1000, 3))
-                if now - last_track_command < TRACK_INTERVAL_SECONDS:
+                if not person_mode and now - last_track_command < TRACK_INTERVAL_SECONDS:
                     continue
                 dx, dy = filtered_x - 0.5, filtered_y - 0.5
                 pan_actual = actual_pulse(fd, "PAN")
@@ -427,6 +490,14 @@ def main():
                 desired_tilt = frame_target(frame_tilt, dy)
                 # Smooth absolute targets; smoothing image coordinates across
                 # different camera poses would add another feedback delay.
+                if person_mode:
+                    filtered_pan_target = smooth_person_target(
+                        filtered_pan_target, desired_pan, sample_interval)
+                    filtered_tilt_target = smooth_person_target(
+                        filtered_tilt_target, desired_tilt, sample_interval)
+                    # Update the absolute destination once per camera result;
+                    # the independent ticker spreads existing 80 us steps.
+                    continue
                 filtered_pan_target = desired_pan if filtered_pan_target is None else (
                     .25 * filtered_pan_target + .75 * desired_pan)
                 filtered_tilt_target = desired_tilt if filtered_tilt_target is None else (
@@ -455,6 +526,26 @@ def main():
                          desired_pan=round(filtered_pan_target, 2),
                          desired_tilt=round(filtered_tilt_target, 2),
                          filtered_x=round(filtered_x, 4), filtered_y=round(filtered_y, 4),
+                         moved=pan_moved or tilt_moved)
+                continue
+            if command is None and tracking and person_mode and armed and \
+                    filtered_pan_target is not None and now - last_track_command >= PERSON_TICK_SECONDS:
+                pan_actual = actual_pulse(fd, "PAN")
+                tilt_actual = actual_pulse(fd, "TILT")
+                sampled_ms = time.monotonic() * 1000
+                if sampled_ms - person_probe_ms > 500:
+                    continue
+                pose_history.append((sampled_ms, pan_actual, tilt_actual))
+                pan_target, pan_moved = track_axis(fd, "PAN", pan_actual, pan_target,
+                    0, filtered_pan_target, max_steps=1)
+                tilt_target, tilt_moved = track_axis(fd, "TILT", tilt_actual, tilt_target,
+                    0, filtered_tilt_target, max_steps=1)
+                if not (pan_moved or tilt_moved):
+                    require(fd, "TRK KEEP", "TRK=ARMED")
+                last_track_command = time.monotonic()
+                if TIMING:
+                    emit("timing", type="person_tick", at_ms=round(last_track_command * 1000, 3),
+                         probe_ms=person_probe_ms, pan_target=pan_target, tilt_target=tilt_target,
                          moved=pan_moved or tilt_moved)
                 continue
             if command in COMMANDS:

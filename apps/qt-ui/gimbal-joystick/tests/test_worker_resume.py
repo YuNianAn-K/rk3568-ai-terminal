@@ -12,6 +12,7 @@ from pathlib import Path
 
 master, slave = pty.openpty()
 commands = []
+command_times = []
 outputs = []
 position = None
 targets = [1500, 1500]
@@ -34,6 +35,7 @@ def firmware():
             raw, buffer = buffer.split(b"\n", 1)
             command = raw.decode().strip()
             commands.append(command)
+            command_times.append((command, time.monotonic()))
             if command == "PING":
                 reply = "PONG"
             elif command == "PAN STOP":
@@ -136,6 +138,54 @@ with tempfile.TemporaryDirectory() as temp:
         wait_until(lambda: len(outputs) >= output_count + 2)
         assert outputs[output_count:output_count + 2] == [(0, retained[0]), (1, retained[1])], outputs
         assert commands.count("TRK CENTER") == center_count
+        if person_mode:
+            # Weak confidence continues the same session. A missing box
+            # disables PWM, then fresh associated samples resume in place.
+            stamp = int(time.monotonic() * 1000)
+            arms = commands.count("TRK ARM")
+            send("PERSON .2 .2 .45 0 %d %d" % (stamp, stamp))
+            time.sleep(.10)
+            assert armed and commands.count("TRK ARM") == arms
+            send("PERSON_PAUSE")
+            wait_until(lambda: not armed)
+            paused_commands = len(commands)
+            time.sleep(.15)
+            assert not any(c.startswith(("TRK P", "TRK T")) and c != "TRK POS?"
+                           for c in commands[paused_commands:]), commands
+            samples()
+            wait_until(lambda: armed)
+            assert commands.count("TRK ARM") == arms + 1
+            assert commands.count("TRK CENTER") == center_count
+            # Recorded user failure: target returns at ~600 ms, but its third
+            # confirmation falls past the original 900 ms search deadline.
+            arms = commands.count("TRK ARM")
+            send("PERSON_PAUSE")
+            wait_until(lambda: not armed)
+            paused_commands = len(commands)
+            time.sleep(.65)
+            for index in range(3):
+                stamp = int(time.monotonic() * 1000)
+                send("PERSON .2 .2 .60 0 %d %d" % (stamp, stamp))
+                if index < 2:
+                    time.sleep(.17)
+                    assert not armed
+                    assert not any(command in ("TRK P+", "TRK P-", "TRK T+", "TRK T-")
+                                   for command in commands[paused_commands:])
+            wait_until(lambda: armed)
+            assert commands.count("TRK ARM") == arms + 1
+            assert commands.count("TRK CENTER") == center_count
+            # Alternating misses and fresh single samples cannot keep a
+            # confirmation alive forever or accidentally satisfy three hits.
+            arms = commands.count("TRK ARM")
+            send("PERSON_PAUSE")
+            wait_until(lambda: not armed)
+            for _ in range(7):
+                stamp = int(time.monotonic() * 1000)
+                send("PERSON .2 .2 .60 0 %d %d" % (stamp, stamp))
+                time.sleep(.10)
+                send("PERSON_PAUSE")
+                time.sleep(.04)
+            assert not armed and commands.count("TRK ARM") == arms
         # A brief miss keeps the session; sustained loss removes output.
         if not person_mode:
             send("HAND 0.00 0.00 0.000 0")
@@ -143,6 +193,12 @@ with tempfile.TemporaryDirectory() as temp:
             assert armed
         wait_until(lambda: not armed)
         if person_mode:
+            # Timer spreads each axis's corrections instead of bursts.
+            for axis in ("P", "T"):
+                times = [stamp for command, stamp in command_times
+                         if command in ("TRK " + axis + "+", "TRK " + axis + "-")]
+                assert len(times) >= 3, times
+                assert min(b - a for a, b in zip(times, times[1:])) >= .055, times
             # A stale first result must never ARM; a hand sample cannot steer
             # a person session. Reject malformed/non-finite person data too.
             for invalid in ("PERSON .2 .2 .72 0 1 2",
@@ -167,6 +223,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert any(event.get("state") == "lost" for event in events)
         assert not any(event["event"] == "error" for event in events)
         if person_mode:
+            assert any(event.get("state") == "paused" for event in events), events
             assert any(event.get("event") == "stopped" and event.get("request_id") == control_id
                        for event in events), events
             assert any(event.get("state") == "active" and event.get("request_id") == control_id
