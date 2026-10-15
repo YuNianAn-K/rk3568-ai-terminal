@@ -17,6 +17,7 @@ Window {
     height: Screen.desktopAvailableHeight
     visible: true
     property real scaleFfactor: desktop.width / 720
+    property bool desktopForeground: true
     flags: Qt.FramelessWindowHint
     x: 0
     y: 0
@@ -26,14 +27,14 @@ Window {
         id: systemUICommonApiServer
         onAppAsktoHideOrShow: function(action) {
             if (action === SystemUICommonApiServer.Hide) {
-                wifiStatusRaiseTimer.restart()
+                desktop.desktopForeground = false
                 phonebg_scale.xScale = 1.2
                 fastBlur.radius = 64
                 control_item_scale.xScale = 0.95
                 brightness_Mask.opacity = 0.3
             }
             if (action === SystemUICommonApiServer.Show) {
-                wifiStatusRaiseTimer.restart()
+                desktop.desktopForeground = true
                 phonebg_scale.xScale = 1.0
                 delayRequestActivateTimer.restart()
                 systemUICommonApiServer.currtentLauchAppName = ""
@@ -133,6 +134,7 @@ Window {
     }
 
     function callApp(name, x, y, item, iconPath, type, currtentPage) {
+        desktop.desktopForeground = false
         desktop.flags = Qt.FramelessWindowHint |  Qt.WindowTransparentForInput
         systemUICommonApiServer.setAppProperty(x, y, item.width, item.height, iconPath, type, currtentPage)
         systemUICommonApiServer.currtentLauchAppName = name
@@ -154,13 +156,9 @@ Window {
 
     WifiStatusOverlay {
         id: wifiStatusOverlay
-    }
-
-    Timer {
-        id: wifiStatusRaiseTimer
-        interval: 180
-        repeat: false
-        onTriggered: wifiStatusOverlay.bringToFront()
+        objectName: "desktopWifiStatus"
+        z: 100
+        visible: desktop.desktopForeground && desktop.visible && desktop.active
     }
 
     RowLayout {
@@ -248,6 +246,7 @@ Window {
         }
         onGoBackToDesktop: {
             if (normal) {
+                desktop.desktopForeground = true
                 viewcontroller.visible = false
                 control_item_scale.xScale = 1.0
                 fastBlur.radius = 0
@@ -257,6 +256,7 @@ Window {
                 delaytoHide_viewcontroller_timer.restart()
         }
         onNoAppIsRunning: {
+            desktop.desktopForeground = true
             viewcontroller.visible = false
             control_item_scale.xScale = 1.0
             fastBlur.radius = 0

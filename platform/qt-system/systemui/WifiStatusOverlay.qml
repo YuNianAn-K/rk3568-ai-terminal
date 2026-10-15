@@ -1,23 +1,13 @@
 import QtQuick 2.12
-import QtQuick.Window 2.12
 import com.alientek.wifi 1.0
 
-Window {
+Item {
     id: wifiStatusWindow
-    width: Math.min(Screen.width * 0.42, 300)
-    height: Math.max(44, Screen.width / 720 * 56)
-    x: Screen.width - width - Math.max(8, Screen.width / 720 * 16)
-    y: Math.max(8, Screen.width / 720 * 12)
-    color: "transparent"
-    visible: true
-    flags: Qt.FramelessWindowHint
-           | Qt.WindowStaysOnTopHint
-           | Qt.WindowTransparentForInput
-           | Qt.Tool
-
-    function bringToFront() {
-        wifiStatusWindow.raise()
-    }
+    // A desktop item cannot float above another application's window.
+    width: Math.min(parent.width * 0.42, 300)
+    height: Math.max(44, parent.width / 720 * 56)
+    x: parent.width - width - Math.max(8, parent.width / 720 * 16)
+    y: Math.max(8, parent.width / 720 * 12)
 
     ConnmanWifiController {
         id: wifiStatus
@@ -94,17 +84,9 @@ Window {
                       ? wifiStatus.ssid : "Wi-Fi 未连接"
                 color: "white"
                 elide: Text.ElideRight
-                font.pixelSize: Math.max(16, Screen.width / 720 * 20)
+                font.pixelSize: Math.max(16, wifiStatusWindow.parent.width / 720 * 20)
             }
         }
     }
 
-    Timer {
-        interval: 2000
-        repeat: true
-        running: true
-        onTriggered: wifiStatusWindow.bringToFront()
-    }
-
-    Component.onCompleted: bringToFront()
 }
