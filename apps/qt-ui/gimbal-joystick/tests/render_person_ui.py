@@ -11,15 +11,25 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
-from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication
+from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot, Qt, QPointF
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPainterPath
 from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
-from PySide6.QtQuick import QQuickPaintedItem
+from PySide6.QtQuick import QQuickPaintedItem, QQuickWindow
 from PySide6.QtTest import QTest
 
 
 class Preview(QQuickPaintedItem):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.radius = 0
+    def set_radius(self, radius):
+        self.radius = radius
+        self.update()
+    cornerRadius = Property(float, lambda self: self.radius, set_radius)
     def paint(self, painter):
+        path = QPainterPath()
+        path.addRoundedRect(self.boundingRect(), self.radius, self.radius)
+        painter.setClipPath(path)
         painter.fillRect(self.boundingRect(), QColor("#182b34"))
         width = min(self.width(), self.height() * 4 / 3)
         height = min(self.height(), self.width() * 3 / 4)
@@ -214,6 +224,12 @@ def main():
             pending.extend(item.childItems())
         return None
 
+    def click_item(name):
+        item = visual_item(name)
+        assert item and item.isVisible(), name
+        point = item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point.toPoint())
+
     def run():
         try:
             # Reproduce the 70% display regression: ordinary 60% detections
@@ -251,8 +267,7 @@ def main():
             capture("selected")
             bridge = mocks["gimbalBridge"]
             assert bridge.starts == 0 and not bridge.samples
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 820))
+            click_item("followButton")
             assert window.property("personFollowing") and bridge.starts == 1
             person.set_boxes([a, b])
             assert bridge.samples[-1] == (.25, .475, .91, 1000, person.stamp)
@@ -302,15 +317,13 @@ def main():
             QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
                              __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(470, 240))
             assert state()["index"] == 0 and bridge.starts == 1
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 820))
+            click_item("followButton")
             assert window.property("personFollowing") and bridge.starts == 2
             stopped = bridge.stops
             QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
                              __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(470, 240))
             assert not window.property("personFollowing") and bridge.stops > stopped
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 820))
+            click_item("followButton")
             bridge.trackingEnded.emit()
             assert not window.property("personFollowing")
             control = mocks["trackingControl"]
@@ -330,12 +343,10 @@ def main():
             starts = bridge.starts
             control.request.emit("START_TRACKING", "d" * 32)
             assert control.codes[-1] == "active" and bridge.starts == starts
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 980))
+            click_item("voiceRecordButton")
             assert window.property("voiceOwned") and mocks["voiceBridge"].value == "recording"
             capture("voice_recording")
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 980))
+            click_item("voiceRecordButton")
             assert mocks["voiceBridge"].value == "recognizing" and window.property("voiceOwned")
             voice = mocks["voiceBridge"]
             voice.heard = "开始跟踪人物"
@@ -351,8 +362,7 @@ def main():
             voice.value = "offline"
             voice.stateChanged.emit()
             assert window.property("voiceLabel") == "语音未连接"
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 980))
+            click_item("voiceRecordButton")
             assert not window.property("voiceOwned")
             capture("voice_unavailable")
             bridge.trackingEnded.emit()
@@ -372,9 +382,9 @@ def main():
             capture("stopped_result")
             assert window.findChild(QObject, "voiceFeedback").property("text") == "云台已停止跟踪。"
             starts = bridge.starts
-            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
-                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(350, 820))
-            assert not window.property("showVoicePanel") and bridge.starts == starts
+            click_item("manualPanelButton")
+            assert window.property("manualPanelOpen") and bridge.starts == starts
+            assert window.property("showVoicePanel")
             capture("manual")
             # Wake stays in this window: no app launch, focus request or tracking stop.
             voice.value = "starting"
@@ -390,7 +400,86 @@ def main():
             assert window.property("autoVoice") and not window.property("voiceOwned")
             assert bridge.stops == stops
             capture("wake_recording")
-            print("PASS: actual QML renders; explicit follow and loss stop; voice transcript/error/offline; retained STOP result; return to manual without motion")
+
+            # Ordinary replies and internal panel focus keep the same task alive.
+            voice.value = "idle"
+            voice.stateChanged.emit()
+            bridge.position_ready = True
+            bridge.changed.emit()
+            person.start()
+            person.set_boxes([a, b])
+            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
+                             __import__('PySide6.QtCore', fromlist=['QPoint']).QPoint(220, 220))
+            assert window.startPersonFollow("") == "pending"
+            bridge.armed = True
+            bridge.changed.emit()
+            stops = bridge.stops
+            samples = len(bridge.samples)
+            preview = visual_item("preview")
+            click_item("taskTab")
+            assert window.property("personFollowing") and person.enabled
+            assert bridge.stops == stops and visual_item("preview") is preview
+            click_item("conversationTab")
+            for phase in ("recording", "recognizing", "thinking", "speaking", "idle"):
+                voice.value = phase
+                voice.stateChanged.emit()
+                person.set_boxes([a, b])
+                assert window.property("personFollowing") and person.enabled
+                assert bridge.stops == stops and window.property("cameraReady")
+            assert len(bridge.samples) == samples + 5
+            window.setProperty("manualPanelOpen", False)
+            voice.heard = "今天有什么建议？"
+            voice.reply = "先完成眼前的小目标，再给自己一点休息时间。"
+            voice.value = "speaking"
+            voice.stateChanged.emit()
+            capture("glass_design")
+            voice.heard = "请介绍一下你正在做什么"
+            voice.reply = "我正在同一窗口显示相机画面与语音回复。" * 35
+            voice.stateChanged.emit()
+            capture("unified_long_reply")
+            scroll = visual_item("voiceConversationScroll")
+            assert scroll.property("contentHeight") > scroll.height()
+            assert window.findChild(QObject, "voiceFeedback").property("text") == voice.reply
+            # STOP bypasses the speech/LLM state; it does not cancel normal chat.
+            voice.value = "thinking"
+            voice.stateChanged.emit()
+            control.request.emit("STOP_TRACKING", "e" * 32)
+            assert control.codes[-1] == "pending" and not window.property("personFollowing")
+            assert bridge.stops > stops and voice.value == "thinking"
+            capture("unified_stop_while_thinking")
+            person.start()
+            stops = bridge.stops
+            click_item("emergencyStopButton")
+            assert not person.enabled and bridge.stops > stops
+            assert voice.value == "thinking"
+
+            # Item focus differs from a true top-level activation loss.
+            person.start()
+            other_window = QQuickWindow()
+            other_window.show()
+            other_window.requestActivate()
+            QTest.qWait(60)
+            assert not window.isActive() and not person.enabled
+            other_window.close()
+            window.requestActivate()
+            QTest.qWait(60)
+
+            # A real top-level hide still releases task ownership and recording.
+            person.start()
+            voice.value = "recording"
+            voice.stateChanged.emit()
+            window.setProperty("voiceOwned", True)
+            window.hide()
+            QTest.qWait(50)
+            assert not person.enabled and not window.property("personFollowing")
+            assert voice.value == "idle" and not window.property("cameraReady")
+            window.show()
+            window.requestActivate()
+            QTest.qWait(50)
+            assert not person.enabled and not window.property("personFollowing")
+            assert window.property("showVoicePanel")
+            capture("unified_return_idle")
+            print("PASS: actual QML target safety; persistent preview through voice/panel states; full scrollable reply; independent STOP during thinking; real hide cancels owned recording and stops detection; restore stays idle")
         except Exception as error:
             errors.append(error)
         finally:

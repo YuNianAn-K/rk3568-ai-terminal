@@ -22,18 +22,19 @@ Item {
             height: (modelData.bottom - modelData.top) * overlay.imageHeight
             color: "transparent"
             border.width: index === overlay.selectedIndex ? 3 : 2
-            border.color: index === overlay.selectedIndex ? "#54e1ca" : "#ffcf70"
+            border.color: index === overlay.selectedIndex ? "#4c9aff" : "#d8a958"
             Rectangle {
                 width: label.implicitWidth + 12
                 height: 27
-                color: index === overlay.selectedIndex ? "#15574f" : "#594820"
+                color: index === overlay.selectedIndex ? "#dd428ef5" : "#df3d3220"
+                radius: 10
                 Text {
                     id: label
                     anchors.centerIn: parent
                     text: (index === overlay.selectedIndex ? "目标 " :
                            modelData.score >= 0.70 ? "人物 " : "候选 ") +
                           Math.round(modelData.score * 100) + "%"
-                    color: "white"
+                    color: index === overlay.selectedIndex ? "white" : "#f0c982"
                     font.pixelSize: 18
                 }
             }
