@@ -16,7 +16,8 @@ import time
 DEVICE = "/dev/ttyS9"
 LOCK_PATH = "/var/run/ai-voice-pc13.lock"
 HOLD_SECONDS = 1.2
-SETTLE_SECONDS = 0.25
+MANUAL_TICK_SECONDS = 0.06
+MANUAL_INPUT_SECONDS = 0.60
 HAND_LOSS_SECONDS = 1.4
 TRACK_INTERVAL_SECONDS = 0.10
 PERSON_TICK_SECONDS = 0.06
@@ -28,10 +29,10 @@ TRACK_GAIN_US = 800
 TRACK_DEADZONE = 0.08
 TIMING = os.environ.get("GIMBAL_TIMING") == "1"
 COMMANDS = {
-    "PAN_LEFT": ("PAN", "PAN CENTER", "PAN +100", "1600US"),
-    "PAN_RIGHT": ("PAN", "PAN CENTER", "PAN -100", "1400US"),
-    "TILT_UP": ("TILT", "TILT CENTER", "TILT -100", "1400US"),
-    "TILT_DOWN": ("TILT", "TILT CENTER", "TILT +100", "1600US"),
+    "PAN_LEFT": ("PAN", 2500),
+    "PAN_RIGHT": ("PAN", 500),
+    "TILT_UP": ("TILT", 500),
+    "TILT_DOWN": ("TILT", 2500),
 }
 
 
@@ -90,12 +91,13 @@ def require(fd, command, expected):
         raise SerialFailure("STM32 回执不匹配")
 
 
-def stop(fd, request_id=""):
+def stop(fd, request_id="", notify=True):
     started = time.monotonic()
     require(fd, "PAN STOP", "PAN_PWM=OFF")
     require(fd, "PAN?", "PAN_PWM=OFF")
     require(fd, "TILT?", "TILT_PWM=OFF")
-    emit("stopped", pan="OFF", tilt="OFF", request_id=request_id)
+    if notify:
+        emit("stopped", pan="OFF", tilt="OFF", request_id=request_id)
     if TIMING:
         emit("timing", type="stop", at_ms=round(time.monotonic() * 1000, 3),
              duration_ms=round((time.monotonic() - started) * 1000, 3))
@@ -111,7 +113,7 @@ def saved_position(fd):
     if len(parts) != 2 or not all(part.isdigit() for part in parts):
         raise SerialFailure("保留位置回执不匹配")
     pan, tilt = map(int, parts)
-    if not (500 <= pan <= 2500 and 750 <= tilt <= 2250):
+    if not (500 <= pan <= 2500 and 500 <= tilt <= 2500):
         raise SerialFailure("保留位置超出限幅")
     return pan, tilt
 
@@ -130,7 +132,7 @@ def actual_pulse(fd, axis):
     if not pulse.isdigit():
         raise SerialFailure("舵机位置回执不匹配")
     value = int(pulse)
-    minimum, maximum = (500, 2500) if axis == "PAN" else (750, 2250)
+    minimum, maximum = 500, 2500
     if not minimum <= value <= maximum:
         raise SerialFailure("舵机位置超出限幅")
     return value
@@ -170,7 +172,7 @@ def smooth_person_target(previous, desired, interval_seconds):
 
 
 def track_axis(fd, axis, actual, target, error, desired_target=None, max_steps=3):
-    minimum, maximum = (500, 2500) if axis == "PAN" else (750, 2250)
+    minimum, maximum = 500, 2500
     if abs(error) <= TRACK_DEADZONE:
         error = 0.0
     offset = max(-TRACK_MAX_LEAD_US, min(TRACK_MAX_LEAD_US,
@@ -213,6 +215,25 @@ def track_axis(fd, axis, actual, target, error, desired_target=None, max_steps=3
 
 def is_track_start(command):
     return command in ("TRACK_START", "PERSON_START") or command.startswith("PERSON_START ")
+
+
+def manual_axis(fd, axis, actual, target, destination):
+    """Advance a held direction without the visual tracking deadzone."""
+    if target == destination:
+        return target, False
+    delta = TRACK_STEP_US if destination > target else -TRACK_STEP_US
+    candidate = max(500, min(2500, target + delta))
+    if abs(candidate - actual) > TRACK_MAX_LEAD_US:
+        return target, False
+    reply = exchange(fd, "TRK " + ("P" if axis == "PAN" else "T") +
+                     ("+" if delta > 0 else "-"))
+    prefix = "TRK_" + axis + "="
+    if not reply.startswith(prefix) or not reply.endswith("US"):
+        raise SerialFailure("手动位置回执不匹配")
+    pulse = reply[len(prefix):-2]
+    if not pulse.isdigit() or int(pulse) != candidate:
+        raise SerialFailure("手动目标变化异常")
+    return candidate, True
 
 
 class InputReader:
@@ -290,9 +311,13 @@ def main():
         require(fd, "PING", "PONG")
         stop(fd)
         track_capable = exchange(fd, "TRK?") == "TRK=OFF"
+        if track_capable:
+            require(fd, "TRK LIMITS?", "TRK_LIMITS=0500,2500,0500,2500")
         position = saved_position(fd) if track_capable else None
         emit("ready", track_capable=track_capable, position_ready=position is not None)
         active_until = None
+        manual_direction = None
+        manual_last_tick = 0.0
         tracking = False
         person_mode = False
         person_request_id = ""
@@ -314,9 +339,25 @@ def main():
             if tracking and person_mode and armed:
                 timeout = min(timeout, max(0, PERSON_TICK_SECONDS -
                                           (time.monotonic() - last_track_command)))
+            if manual_direction is not None:
+                timeout = min(timeout, max(0, MANUAL_TICK_SECONDS -
+                                          (time.monotonic() - manual_last_tick)))
             command = pending if pending is not None else reader.latest(timeout)
             pending = None
             now = time.monotonic()
+            manual_stamp = now
+            if command and command.startswith("MANUAL "):
+                fields = command.split()
+                if len(fields) != 3 or fields[1] not in COMMANDS or not fields[2].isdigit():
+                    raise SerialFailure("手动控制数据格式错误")
+                if not 0 <= now * 1000 - int(fields[2]) <= 500:
+                    stop(fd)
+                    tracking = armed = False
+                    manual_direction = None
+                    active_until = None
+                    continue
+                manual_stamp = int(fields[2]) / 1000
+                command = fields[1]
             stop_request_id = ""
             if command and command.startswith(("CONTROL_STOP ", "PERSON_START ")):
                 fields = command.split()
@@ -347,6 +388,7 @@ def main():
                     continue
                 stop(fd, stop_request_id)
                 active_until = None
+                manual_direction = None
                 tracking = armed = False
                 if command == "TRACK_STOP":
                     emit("tracking", state="off")
@@ -374,6 +416,7 @@ def main():
                     recent_hand.clear()
                     continue
             if command == "CENTER":
+                manual_direction = None
                 stop(fd)
                 tracking = armed = False
                 require(fd, "TRK CENTER", "TRK=CENTERING")
@@ -381,6 +424,7 @@ def main():
                 active_until = time.monotonic() + HOLD_SECONDS
                 continue
             if command in ("TRACK_START", "PERSON_START"):
+                manual_direction = None
                 stop(fd)
                 person_mode = command == "PERSON_START"
                 position = saved_position(fd) if track_capable else None
@@ -550,27 +594,48 @@ def main():
                 continue
             if command in COMMANDS:
                 tracking = armed = False
-                axis, center, step, pulse = COMMANDS[command]
-                stop(fd)
-                require(fd, center, f"{axis}_PWM=1500US")
-                # A release received during settling prevents the step command.
-                interrupted = reader.latest(SETTLE_SECONDS)
-                if interrupted is not None:
+                if manual_direction != command:
+                    manual_direction = None
+                    stop(fd, notify=False)
+                    position = saved_position(fd) if track_capable else None
+                    if position is None:
+                        active_until = None
+                        emit("stopped", pan="OFF", tilt="OFF")
+                        emit("position", ready=False)
+                        emit("tracking", state="uninitialized")
+                        continue
+                    require(fd, "TRK ARM", "TRK=ARMED")
+                    pan_target, tilt_target = position
+                    manual_direction = command
+                    manual_last_tick = now - MANUAL_TICK_SECONDS
+                    axis, destination = COMMANDS[command]
+                    emit("active", axis=axis, pulse=f"目标 {destination}US")
+                # Only fresh UI input extends this deadline, never STATUS or ticks.
+                active_until = manual_stamp + MANUAL_INPUT_SECONDS
+                continue
+            if manual_direction is not None and now < active_until and \
+                    now - manual_last_tick >= MANUAL_TICK_SECONDS:
+                axis, destination = COMMANDS[manual_direction]
+                actual = actual_pulse(fd, axis)
+                if time.monotonic() >= active_until:
                     stop(fd)
+                    manual_direction = None
                     active_until = None
-                    if interrupted == "QUIT":
-                        break
-                    pending = interrupted
                     continue
-                require(fd, step, f"{axis}_PWM={pulse}")
-                other = "TILT" if axis == "PAN" else "PAN"
-                require(fd, other + "?", other + "_PWM=OFF")
-                emit("active", axis=axis, pulse=pulse)
-                active_until = time.monotonic() + HOLD_SECONDS
+                target = pan_target if axis == "PAN" else tilt_target
+                target, moved = manual_axis(fd, axis, actual, target, destination)
+                if axis == "PAN":
+                    pan_target = target
+                else:
+                    tilt_target = target
+                if not moved:
+                    require(fd, "TRK KEEP", "TRK=ARMED")
+                manual_last_tick = time.monotonic()
                 continue
             if active_until is not None and time.monotonic() >= active_until:
                 stop(fd)
                 active_until = None
+                manual_direction = None
                 if track_capable:
                     emit("position", ready=saved_position(fd) is not None)
     finally:

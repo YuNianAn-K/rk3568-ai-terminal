@@ -7,6 +7,7 @@ import "PersonTargets.js" as PersonTargets
 Window {
     id: window
     visible: true
+    title: "智能终端 · " + (typeof appReleaseId !== "undefined" ? appReleaseId : "未标记版本")
     width: Screen.width
     height: Screen.height
     color: "#0c0e12"
@@ -254,8 +255,10 @@ Window {
         }
         Text {
             x: 30; y: 80; width: 500
-            text: "看见目标 · 听见你的声音"
-            color: "#9ba7ba"; font.pixelSize: 17
+            objectName: "releaseBadge"
+            text: (typeof appIsPreview !== "undefined" && appIsPreview ? "试用版 · " : "版本 · ") +
+                  (typeof appReleaseId !== "undefined" ? appReleaseId : "未标记版本")
+            color: "#7ce7ef"; font.pixelSize: 19; font.bold: true
         }
         GlassButton {
             objectName: "exitButton"

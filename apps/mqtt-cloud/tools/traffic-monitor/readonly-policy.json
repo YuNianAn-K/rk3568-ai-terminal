@@ -1,0 +1,1 @@
+{"Version":"1","Statement":[{"Effect":"Allow","Action":["cms:QueryMetricList"],"Resource":"*"},{"Effect":"Allow","Action":["bssapi:DescribeInstanceBill"],"Resource":"*","Condition":{"StringEquals":{"bssapi:ProductCode":"cdt"}}}]}

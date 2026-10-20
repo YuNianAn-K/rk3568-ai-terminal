@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QTimer>
 
 class GimbalBridge : public QObject
 {
@@ -59,6 +60,7 @@ private:
     void setPersonArmed(bool armed);
 
     QProcess m_worker;
+    QTimer m_manualTimer;
     QByteArray m_buffer;
     QString m_direction;
     QString m_status;

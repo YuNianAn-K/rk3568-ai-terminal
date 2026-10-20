@@ -1,0 +1,514 @@
+{
+  "release": "PDET-20261019-CONT-V2",
+  "status": "isolated board-tested checkpoint; not a formal installation or complete stability certification",
+  "qt": "5.15.8",
+  "architecture": "AArch64",
+  "stm32": "500-2500 us paired firmware; mechanical endpoints not certified",
+  "historical_binary_sha256": "4566655b1acb29045dba1d50d73eec184e2587ff807464ad9c248a4287b71708",
+  "files": [
+    {
+      "path": "apps/qt-ui/aivoice/voicebridge.cpp",
+      "sha256": "d3f7e1f2d2ba3f5b2d71a2c00962d9ce30a966aec5c2720c191e5595e8bc2920",
+      "lf_sha256": "d3f7e1f2d2ba3f5b2d71a2c00962d9ce30a966aec5c2720c191e5595e8bc2920",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/aivoice/voicebridge.h",
+      "sha256": "b6eafd22dd6cdc54f2789f5e37fcb6e559a07b0b2655bfd74d790b56868f099a",
+      "lf_sha256": "b6eafd22dd6cdc54f2789f5e37fcb6e559a07b0b2655bfd74d790b56868f099a",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/cameramonitor.cpp",
+      "sha256": "8b6cad6445a1a699dd717192c0187993976e92a03d6b51d1d567a580dd51483c",
+      "lf_sha256": "8b6cad6445a1a699dd717192c0187993976e92a03d6b51d1d567a580dd51483c",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/cameramonitor.h",
+      "sha256": "38121c251cabfa334fa67abe16788c761c547cf7f2cac45b67864d74563ee41a",
+      "lf_sha256": "38121c251cabfa334fa67abe16788c761c547cf7f2cac45b67864d74563ee41a",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/FollowGrace.qml",
+      "sha256": "8b44e78da2237001e137b89958c9840422429a40b84e9c5c6608d463ea70c509",
+      "lf_sha256": "8b44e78da2237001e137b89958c9840422429a40b84e9c5c6608d463ea70c509",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/gimbal-joystick.pro",
+      "sha256": "13844e539ecc113675a5230e6616b22349a6ee440f1f29e93647dbf6d9623173",
+      "lf_sha256": "13844e539ecc113675a5230e6616b22349a6ee440f1f29e93647dbf6d9623173",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/gimbal_worker.py",
+      "sha256": "2ecf94722e02975d6b9c54b19a13ec521e106363eb4913eb2362e60e4892dfe0",
+      "lf_sha256": "2ecf94722e02975d6b9c54b19a13ec521e106363eb4913eb2362e60e4892dfe0",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/gimbalbridge.cpp",
+      "sha256": "14d1233d55962ce4771def4757c8971871bc924cce5e8355c67762e1a2b18503",
+      "lf_sha256": "14d1233d55962ce4771def4757c8971871bc924cce5e8355c67762e1a2b18503",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/gimbalbridge.h",
+      "sha256": "6bbddd25420794c0753a9edd5a02617b6725274ccf35f9e5db15bed95d804663",
+      "lf_sha256": "6bbddd25420794c0753a9edd5a02617b6725274ccf35f9e5db15bed95d804663",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/GlassButton.qml",
+      "sha256": "b765000411ee03e2085790ca5e0214b26835c8b3beb9abb77ad4bf5a1c4f881b",
+      "lf_sha256": "b765000411ee03e2085790ca5e0214b26835c8b3beb9abb77ad4bf5a1c4f881b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/GlassSurface.qml",
+      "sha256": "87942d9efc6720d618c9f178fb417888e7eb6d14f2da7c74f068d08a09835d76",
+      "lf_sha256": "87942d9efc6720d618c9f178fb417888e7eb6d14f2da7c74f068d08a09835d76",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/hand_detector.py",
+      "sha256": "d3b89fe6f106b8f3282095d589fa3aa7baa28dabab211b6c798d6f4838f218ab",
+      "lf_sha256": "d3b89fe6f106b8f3282095d589fa3aa7baa28dabab211b6c798d6f4838f218ab",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/handtracker.cpp",
+      "sha256": "a9188fda278f8d2c43c1e84ed5c90cdec9fedaed1256ee59c85f5e81413a8c7a",
+      "lf_sha256": "a9188fda278f8d2c43c1e84ed5c90cdec9fedaed1256ee59c85f5e81413a8c7a",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/handtracker.h",
+      "sha256": "c8c28cf334be0737cca1992f85dc0000a8b1923e2fe5a640f063a6151fe0b989",
+      "lf_sha256": "c8c28cf334be0737cca1992f85dc0000a8b1923e2fe5a640f063a6151fe0b989",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/head_backend.py",
+      "sha256": "b776d472d90e56b9d985cdc44fa67d9fdbc63de7b286891c5ebc453500779d2a",
+      "lf_sha256": "b776d472d90e56b9d985cdc44fa67d9fdbc63de7b286891c5ebc453500779d2a",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/head_decode.py",
+      "sha256": "8f20666c56c3e9d8d44c244a965be30fca2739399aa30a0d0d23d0afdb97e9f9",
+      "lf_sha256": "8f20666c56c3e9d8d44c244a965be30fca2739399aa30a0d0d23d0afdb97e9f9",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/HeadAim.js",
+      "sha256": "f74a0abd8ee9a61c124f8e01ccdfe43c2d8030aa45411fab9eec5ae5fad64da1",
+      "lf_sha256": "f74a0abd8ee9a61c124f8e01ccdfe43c2d8030aa45411fab9eec5ae5fad64da1",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/launch-from-systemui.sh",
+      "sha256": "af82dab2c010fa80a8e23ab54566c3a3ddf541a113db2a9aad8049fe536079ba",
+      "lf_sha256": "af82dab2c010fa80a8e23ab54566c3a3ddf541a113db2a9aad8049fe536079ba",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/main.cpp",
+      "sha256": "8ad41c4c5e024fd7f74b05d29f9e15f41a6d7d96919f5e4191948d071fcfda68",
+      "lf_sha256": "8ad41c4c5e024fd7f74b05d29f9e15f41a6d7d96919f5e4191948d071fcfda68",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/Main.qml",
+      "sha256": "7988626705cd17c88ff4e64f2d252252a42a822bcef54eb2ecfa7881f552b1eb",
+      "lf_sha256": "7988626705cd17c88ff4e64f2d252252a42a822bcef54eb2ecfa7881f552b1eb",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/palm_detection_lite.tflite",
+      "sha256": "e9a4aaddf90dda56a87235303cf00e4c2d3fb28725f68fd88772997dac905c18",
+      "lf_sha256": null,
+      "included": false
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_capture.py",
+      "sha256": "090a6ebdcee47e139d6ebc0b57a5af85cffe4bcfb14d73f3194317388b7ab981",
+      "lf_sha256": "090a6ebdcee47e139d6ebc0b57a5af85cffe4bcfb14d73f3194317388b7ab981",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_detection_v8.rknn",
+      "sha256": "36566148f41a51ba192ca44423e32238223d3a77e9fe11e8618c2b5d0c0c6ecd",
+      "lf_sha256": null,
+      "included": false
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_detection_v8s.rknn",
+      "sha256": "7702e02808a4f977cd9ba9a6d2ed7da2d1eaaae376b7162a149824bc5928be29",
+      "lf_sha256": null,
+      "included": false
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_detector.py",
+      "sha256": "5a9313f6687a4a2ac3977fa4a57f2da5d4674d1279a2b1661f099ca69396eb0d",
+      "lf_sha256": "ea9a573dce70199e693436405f6ace5b2c4f516c1edfe505916ceddf165e70d6",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_model.LICENSE",
+      "sha256": "5b17814bf0de8cf65069bc6d7cc38cff19fcaa864d243423ad3ef3db01b52385",
+      "lf_sha256": "5b17814bf0de8cf65069bc6d7cc38cff19fcaa864d243423ad3ef3db01b52385",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/PERSON_MODEL.md",
+      "sha256": "8b339944707f06d16d72e8a135ab45235c89e44248aa8da6138ff3a9c8f3f699",
+      "lf_sha256": "8b339944707f06d16d72e8a135ab45235c89e44248aa8da6138ff3a9c8f3f699",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_rknn.py",
+      "sha256": "81d74375f67020f577fc63c3eebec76cf847c359547041d2cf0964044ea02d89",
+      "lf_sha256": "80565f63db8f727607711053dd278a54cfda67aed525b21b9dd43beb6c0dfd58",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/person_rknn_v8.py",
+      "sha256": "c70f603b42a01d5adba7239398801c03f10a72a892127e28eaeb80673dd29893",
+      "lf_sha256": "290bf3098b667abbf8c9179f31bd88447d91bc34e57949ed32900f0410081281",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/PersonOverlay.qml",
+      "sha256": "bf40f0b66c1a386475ce5bb7f0206e51bf9a01aef7d3dcf63cb6be913ed6ad4d",
+      "lf_sha256": "2bc9311410485f88627c75ef5163a65524dbe429e13ffb1601d898b5c2952834",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/PersonTargets.js",
+      "sha256": "f7ae099ce12fcdb28a1c64c364dc8a46a908336d5b8bb2fb8ec3e40a627b88f3",
+      "lf_sha256": "f7ae099ce12fcdb28a1c64c364dc8a46a908336d5b8bb2fb8ec3e40a627b88f3",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/persontracker.cpp",
+      "sha256": "2ea3bfdaf10ef3b7b8c419d80b06b844987d83782b2443abcff628dc3fb5b0e4",
+      "lf_sha256": "5525740f46502a6c687abd8de5a6b2198c7b69bd2e58ecb1661350b444dc27a7",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/persontracker.h",
+      "sha256": "17d0bbcdf241fe6a8f07bfcadbfed67f1da3c77784ba5be6328927fa7d785d78",
+      "lf_sha256": "476c222fe611ab2f83ab6276e5c788550a34a85d52755afce036f5d1ba640a6b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/previewitem.cpp",
+      "sha256": "b2de618005c42fb3a24cbafae09d4230104262494a59dab6c60e220f3a22b53b",
+      "lf_sha256": "b2de618005c42fb3a24cbafae09d4230104262494a59dab6c60e220f3a22b53b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/previewitem.h",
+      "sha256": "c702a7d522c6b7b3b1247bcf6304d3f625333005db1345e9878ef2e723b7cffa",
+      "lf_sha256": "c702a7d522c6b7b3b1247bcf6304d3f625333005db1345e9878ef2e723b7cffa",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/qml.qrc",
+      "sha256": "ff33945a4bf1bc363d076af1f5696b9e93bdce4a1f99ec75cc78ad1617aba6c1",
+      "lf_sha256": "c6e7c04668cb8826ff7d613aa3d1c0969d77ac20548f37ce82cad26452f1ebf9",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/release-id.txt",
+      "sha256": "1b599dd7e35fe0eb448ee539d217adad119a5ac74b60f994cb4cf96f50e09692",
+      "lf_sha256": "0bb39847bff340332d81ca21c2db35d295be087c824c2a93487cda64fbab85e7",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/show-preview.py",
+      "sha256": "c0d5e337fd3fd656baf8904f749b6d82a59e7f1d732a09839ca1f67200e62280",
+      "lf_sha256": "c0d5e337fd3fd656baf8904f749b6d82a59e7f1d732a09839ca1f67200e62280",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/start-preview.sh",
+      "sha256": "1115d6ac7b8f350d6db26d7586d3d6975d9e4792e94bfb77b97eba9f45b12174",
+      "lf_sha256": "1115d6ac7b8f350d6db26d7586d3d6975d9e4792e94bfb77b97eba9f45b12174",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/start.sh",
+      "sha256": "57c21e171598e300e8d1a44b161195749049cafc3d14b83e621f7ec2f20eda50",
+      "lf_sha256": "57c21e171598e300e8d1a44b161195749049cafc3d14b83e621f7ec2f20eda50",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/systemuicommonapi.rep",
+      "sha256": "ca44c98643157ff8346cd392a8cac00736ce4eaa26839b01e4d85dda6c091106",
+      "lf_sha256": "ca44c98643157ff8346cd392a8cac00736ce4eaa26839b01e4d85dda6c091106",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/benchmark_person.py",
+      "sha256": "892ba093b3524e906e7ffbc99397b6a7684fd4f45a690dd56930b022f84365a5",
+      "lf_sha256": "892ba093b3524e906e7ffbc99397b6a7684fd4f45a690dd56930b022f84365a5",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/camera_motion_bench.cpp",
+      "sha256": "a14ca1374437c4254916fcb07406b2cc1c343c7620a65a05f7afd1dc977d4934",
+      "lf_sha256": "a14ca1374437c4254916fcb07406b2cc1c343c7620a65a05f7afd1dc977d4934",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/camera_motion_bench.pro",
+      "sha256": "cf0198c3290a4bbe91f8e6c90b1cdda4edc58e01a705eb328d606be3ba05206b",
+      "lf_sha256": "cf0198c3290a4bbe91f8e6c90b1cdda4edc58e01a705eb328d606be3ba05206b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/compare_person_models.py",
+      "sha256": "a0a324757225c9f8d4868f57bdf9a392634f458262f7b396342116fd5fb7d372",
+      "lf_sha256": "a0a324757225c9f8d4868f57bdf9a392634f458262f7b396342116fd5fb7d372",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/fake_gimbal_worker.py",
+      "sha256": "2406bf4602a36a4dac6c6798bdb8fd83ca9127660dd2b869c42aba639c954f61",
+      "lf_sha256": "2406bf4602a36a4dac6c6798bdb8fd83ca9127660dd2b869c42aba639c954f61",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/fake_person_detector.py",
+      "sha256": "111b69fb0f6239f807799e1eafc14019780930ffc49d4090b62338425f3a13c9",
+      "lf_sha256": "111b69fb0f6239f807799e1eafc14019780930ffc49d4090b62338425f3a13c9",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/personbridge_test.pro",
+      "sha256": "edc367f20bdbab4fc6ef7f29cd34cac4b42ad5f0b1b46310593a711cde7572bd",
+      "lf_sha256": "edc367f20bdbab4fc6ef7f29cd34cac4b42ad5f0b1b46310593a711cde7572bd",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/personpipeline_test.pro",
+      "sha256": "618144f6bd054382bdb610fb755ec6275db32b4a654d6d29f985e24b6ad76218",
+      "lf_sha256": "618144f6bd054382bdb610fb755ec6275db32b4a654d6d29f985e24b6ad76218",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/persontracker_test.pro",
+      "sha256": "0eb20d0812676a0b4752eb3a5acee619fd793a9e385e897b140e952ec50c761b",
+      "lf_sha256": "0eb20d0812676a0b4752eb3a5acee619fd793a9e385e897b140e952ec50c761b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/pipeline_person_detector.py",
+      "sha256": "bc3bd002123d54085f6d4d6e11b6f4daa23418e19aab53dd3fb9fef2bfceff52",
+      "lf_sha256": "bc3bd002123d54085f6d4d6e11b6f4daa23418e19aab53dd3fb9fef2bfceff52",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/previewitem_test.pro",
+      "sha256": "bbfd396bec864e658930fb9896a8ca2b2459ab2f1d58c96b608d559e567f99d6",
+      "lf_sha256": "bbfd396bec864e658930fb9896a8ca2b2459ab2f1d58c96b608d559e567f99d6",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/render_person_ui.py",
+      "sha256": "4d3bb105b6df55758c326a740f3392cfeb58db664a314ed34d43f8712be09351",
+      "lf_sha256": "4d3bb105b6df55758c326a740f3392cfeb58db664a314ed34d43f8712be09351",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_delayed_feedback.py",
+      "sha256": "8d7947aba1f6be54f3c5685dcfba63a7e5023088573a700cc42614adf235b75b",
+      "lf_sha256": "8d7947aba1f6be54f3c5685dcfba63a7e5023088573a700cc42614adf235b75b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_framing_resume.py",
+      "sha256": "29586cc20222c117ae8a8306de2fea45e8863c7fbf785ba1296c714bae22e863",
+      "lf_sha256": "ea16eb4cd17b7c86e1589cf75cab8bdc644d87b6c83d5e41c8be38f4e716919b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_manual_hold.py",
+      "sha256": "182d092e85fc5bb1b94470f5fc3efe6fd4ffef8339aa92b08d106d3a6e84704d",
+      "lf_sha256": "182d092e85fc5bb1b94470f5fc3efe6fd4ffef8339aa92b08d106d3a6e84704d",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_person_capture.py",
+      "sha256": "1c49dacb04994d404ebbebfd0c808add77b5d75e0cb4ef742ae4ac4532554a63",
+      "lf_sha256": "1c49dacb04994d404ebbebfd0c808add77b5d75e0cb4ef742ae4ac4532554a63",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_person_detector.py",
+      "sha256": "f885f060695995b478533d8feb3cb74f661b6a742eeb5d4002e5b8ac826244ce",
+      "lf_sha256": "f885f060695995b478533d8feb3cb74f661b6a742eeb5d4002e5b8ac826244ce",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_person_rknn.py",
+      "sha256": "07bb3b07b1d339cb45668b2e1e9422cdd85d0c1c6a3522dddc852653cfdfb9c0",
+      "lf_sha256": "073f40e580ba860701a2c4ba29efca3496d5c7a385c3c774a946bd0f1bbbc871",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_person_rknn_v8.py",
+      "sha256": "d812e1c9793ac44f0ed4c792baec5b21ebadfa2882c9131f26fb8949e32ed433",
+      "lf_sha256": "d812e1c9793ac44f0ed4c792baec5b21ebadfa2882c9131f26fb8949e32ed433",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_person_targets.js",
+      "sha256": "b109e71316449154fa0b039665b7a8de9e59c295e8c2b583ce1066dc9319febb",
+      "lf_sha256": "b109e71316449154fa0b039665b7a8de9e59c295e8c2b583ce1066dc9319febb",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_personbridge.cpp",
+      "sha256": "f3030be780ae1a8a9122c671e3f297595682ba3e4ecad5da1f442acd8911b055",
+      "lf_sha256": "b65c9f7a3f4f69a590711243e8bc6535c17a398bece9d21fc65698b09d6d4fc0",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_personpipeline.cpp",
+      "sha256": "04928bdee7a2cbac35b02ca7cf10f26f1d623974d131262bacbd425b3ac03bd0",
+      "lf_sha256": "04928bdee7a2cbac35b02ca7cf10f26f1d623974d131262bacbd425b3ac03bd0",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_persontracker.cpp",
+      "sha256": "4b0a948e98df17baf9d091aaea381727030d4f5ce409a76f186f341e0af89d2a",
+      "lf_sha256": "4b0a948e98df17baf9d091aaea381727030d4f5ce409a76f186f341e0af89d2a",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_previewitem.cpp",
+      "sha256": "ea1cc452f745b5831d16b87fee4968943edafe99235e887fa1c3ae4e8055a163",
+      "lf_sha256": "ea1cc452f745b5831d16b87fee4968943edafe99235e887fa1c3ae4e8055a163",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_trackingcontrol.cpp",
+      "sha256": "2ee57bcbea2cb88daab698f589794e08a6e4fb0db138fb7319cc5a6622e85a28",
+      "lf_sha256": "2ee57bcbea2cb88daab698f589794e08a6e4fb0db138fb7319cc5a6622e85a28",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/test_worker_resume.py",
+      "sha256": "7befeb902b338df08f19b771c247864f83f0c665a457321ba914dc2f3cbe7855",
+      "lf_sha256": "8f6df7e6fbc3e36a36d2971425b403cd5870e33de9fd649b9860ce5b123a51ce",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/tests/trackingcontrol_test.pro",
+      "sha256": "cfbaed3f7b3264a4b44216b791a81d6d1af511bcf545c04f34d4dc1087a17fe8",
+      "lf_sha256": "cfbaed3f7b3264a4b44216b791a81d6d1af511bcf545c04f34d4dc1087a17fe8",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/trackingcontrol.cpp",
+      "sha256": "a1783a43c6f0c1726c4e444bec50b04edb7d294f613e2714da19b191585c8d8b",
+      "lf_sha256": "a1783a43c6f0c1726c4e444bec50b04edb7d294f613e2714da19b191585c8d8b",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/trackingcontrol.h",
+      "sha256": "6cec7320e8348370cb6aca665d4a0b0a3026b46c08fb2394a8d3bebb842c6546",
+      "lf_sha256": "6cec7320e8348370cb6aca665d4a0b0a3026b46c08fb2394a8d3bebb842c6546",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/UiSymbol.qml",
+      "sha256": "9763c980f0f26476443393231a1fd527bf2b9ec41adbd0cc4bdf027d8e368f2c",
+      "lf_sha256": "9763c980f0f26476443393231a1fd527bf2b9ec41adbd0cc4bdf027d8e368f2c",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/UnifiedVoicePanel.qml",
+      "sha256": "d44b51bc262e190645398bf09450d0286e11faa47d2bfea8219cda2e64490a0f",
+      "lf_sha256": "d44b51bc262e190645398bf09450d0286e11faa47d2bfea8219cda2e64490a0f",
+      "included": true
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/yunet-fixed320-fp16.rknn",
+      "sha256": "efaf711a5b5c1a399d02be51fe2cb7863e28c29da4e9b864dfe6f4c12c59e76a",
+      "lf_sha256": null,
+      "included": false
+    },
+    {
+      "path": "apps/qt-ui/gimbal-joystick/yunet.LICENSE",
+      "sha256": "c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",
+      "lf_sha256": "c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/Common.qml",
+      "sha256": "504db4ce0417e534c5a7a511b399f754e5d59ffbc3c3072432257e4962e00552",
+      "lf_sha256": "504db4ce0417e534c5a7a511b399f754e5d59ffbc3c3072432257e4962e00552",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/common.qrc",
+      "sha256": "4f490c44ef9b9aa1c13ea01bffeb3983ac924f08bd84305cc6ec7edecd78c2a4",
+      "lf_sha256": "4f490c44ef9b9aa1c13ea01bffeb3983ac924f08bd84305cc6ec7edecd78c2a4",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/CustomRectangle.qml",
+      "sha256": "561822285321a4d519545d91b4f127214262f550cba2150bd16a79e2af76e3af",
+      "lf_sha256": "561822285321a4d519545d91b4f127214262f550cba2150bd16a79e2af76e3af",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/CustomSwitch.qml",
+      "sha256": "02c05cde5040788cfdf86390da8fa7bc33dbc66cbb05610cffe8483629b476e1",
+      "lf_sha256": "02c05cde5040788cfdf86390da8fa7bc33dbc66cbb05610cffe8483629b476e1",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/Dock.qml",
+      "sha256": "e9c7c6716c9b3b06345ac38baa8847e3acf0c252ab1f117850ae9309ffa57869",
+      "lf_sha256": "e9c7c6716c9b3b06345ac38baa8847e3acf0c252ab1f117850ae9309ffa57869",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/systemuicommonapiclient.cpp",
+      "sha256": "45456514f4d3bc9aa3aa09f0bf258a434e3b11de5c8b858c15c837dab548352e",
+      "lf_sha256": "45456514f4d3bc9aa3aa09f0bf258a434e3b11de5c8b858c15c837dab548352e",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/systemuicommonapiclient.h",
+      "sha256": "adefb7f4aa0f1581ba607c01f273a9f9b818a68290767e4a15694d6031401750",
+      "lf_sha256": "adefb7f4aa0f1581ba607c01f273a9f9b818a68290767e4a15694d6031401750",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/volumemonitor.cpp",
+      "sha256": "05fff99a5facbbee325e481556e16ce64a46f2e0fea5983def60fccf173e3146",
+      "lf_sha256": "05fff99a5facbbee325e481556e16ce64a46f2e0fea5983def60fccf173e3146",
+      "included": true
+    },
+    {
+      "path": "platform/qt-system/client/volumemonitor.h",
+      "sha256": "f696a25c556effb60d355c88b7a019214202337a58b2bc07e8debae19398d441",
+      "lf_sha256": "f696a25c556effb60d355c88b7a019214202337a58b2bc07e8debae19398d441",
+      "included": true
+    },
+    {
+      "path": "trial.env",
+      "sha256": "b6db5f225757dfa8dba46fa646d184c11a75245770b5d7d794493191be265975",
+      "lf_sha256": null,
+      "included": false
+    }
+  ]
+}

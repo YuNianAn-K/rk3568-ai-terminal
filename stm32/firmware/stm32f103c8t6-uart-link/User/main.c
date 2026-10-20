@@ -19,8 +19,8 @@
 #define PAN_PROBE_MS 60U
 #define TRACK_PAN_MIN_US 500U
 #define TRACK_PAN_MAX_US 2500U
-#define TRACK_TILT_MIN_US 750U
-#define TRACK_TILT_MAX_US 2250U
+#define TRACK_TILT_MIN_US 500U
+#define TRACK_TILT_MAX_US 2500U
 #define TRACK_TARGET_STEP_US 80U
 #define TRACK_RAMP_STEP_US 24U
 #define TRACK_RAMP_PERIOD_MS 20U
@@ -514,6 +514,18 @@ static void ProcessCommand(const char *Command)
 			Serial_SendNumber(TiltPulseUs, 4);
 			Serial_SendString("\r\n");
 		}
+	}
+	else if (strcmp(Command, "TRK LIMITS?") == 0)
+	{
+		Serial_SendString("TRK_LIMITS=");
+		Serial_SendNumber(TRACK_PAN_MIN_US, 4);
+		Serial_SendString(",");
+		Serial_SendNumber(TRACK_PAN_MAX_US, 4);
+		Serial_SendString(",");
+		Serial_SendNumber(TRACK_TILT_MIN_US, 4);
+		Serial_SendString(",");
+		Serial_SendNumber(TRACK_TILT_MAX_US, 4);
+		Serial_SendString("\r\n");
 	}
 	else if (strcmp(Command, "TRK CENTER") == 0)
 	{

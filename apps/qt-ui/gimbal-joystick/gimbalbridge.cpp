@@ -13,6 +13,17 @@
 
 GimbalBridge::GimbalBridge(QObject *parent) : QObject(parent)
 {
+    m_manualTimer.setInterval(200);
+    connect(&m_manualTimer, &QTimer::timeout, this, [this]() {
+        if (!m_connected || m_direction.isEmpty()) {
+            m_manualTimer.stop();
+            return;
+        }
+        QElapsedTimer clock;
+        clock.start();
+        send("MANUAL " + m_direction.toLatin1() + ' ' +
+             QByteArray::number(clock.msecsSinceReference()) + '\n');
+    });
     setStatus(QStringLiteral("正在连接云台"));
     connect(&m_worker, &QProcess::readyReadStandardOutput, this, &GimbalBridge::processOutput);
     connect(&m_worker, &QProcess::readyReadStandardError, this, [this]() {
@@ -42,6 +53,7 @@ GimbalBridge::GimbalBridge(QObject *parent) : QObject(parent)
 
 GimbalBridge::~GimbalBridge()
 {
+    m_manualTimer.stop();
     if (m_worker.state() != QProcess::NotRunning) {
         send("STOP\nQUIT\n");
         if (!m_worker.waitForFinished(1500)) {
@@ -71,11 +83,16 @@ void GimbalBridge::press(const QString &direction)
     if (m_direction == direction)
         return;
     m_direction = direction;
-    send(direction.toLatin1() + '\n');
+    QElapsedTimer clock;
+    clock.start();
+    send("MANUAL " + direction.toLatin1() + ' ' +
+         QByteArray::number(clock.msecsSinceReference()) + '\n');
+    m_manualTimer.start();
 }
 
 void GimbalBridge::stop()
 {
+    m_manualTimer.stop();
     setPersonArmed(false);
     m_personTracking = false;
     m_direction.clear();
@@ -90,6 +107,8 @@ void GimbalBridge::refresh()
 
 void GimbalBridge::trackStart()
 {
+    m_manualTimer.stop();
+    m_direction.clear();
     m_personTracking = false;
     if (m_connected && m_trackCapable && m_positionReady)
         send("TRACK_START\n");
@@ -97,6 +116,8 @@ void GimbalBridge::trackStart()
 
 void GimbalBridge::personStart(const QString &requestId)
 {
+    m_manualTimer.stop();
+    m_direction.clear();
     if (!m_connected || !m_trackCapable || !m_positionReady)
         return;
     m_personTracking = true;
@@ -114,6 +135,7 @@ void GimbalBridge::requestStop(const QString &requestId)
 {
     if (!QRegularExpression(QStringLiteral("^[a-f0-9]{32}$")).match(requestId).hasMatch())
         return;
+    m_manualTimer.stop();
     m_personTracking = false;
     setPersonArmed(false);
     m_direction.clear();
@@ -156,12 +178,16 @@ void GimbalBridge::personSample(double x, double y, double score,
 
 void GimbalBridge::center()
 {
+    m_manualTimer.stop();
+    m_direction.clear();
     if (m_connected && m_trackCapable)
         send("CENTER\n");
 }
 
 void GimbalBridge::trackStop()
 {
+    m_manualTimer.stop();
+    m_direction.clear();
     send("TRACK_STOP\n");
 }
 
@@ -184,6 +210,7 @@ void GimbalBridge::setConnected(bool connected)
         return;
     m_connected = connected;
     if (!connected) setPersonArmed(false);
+    if (!connected) m_manualTimer.stop();
     emit connectedChanged();
 }
 
@@ -242,9 +269,10 @@ void GimbalBridge::processOutput()
             const QString axis = data.value(QStringLiteral("axis")).toString();
             const QString pulse = data.value(QStringLiteral("pulse")).toString();
             setStatus(axis == QStringLiteral("PAN") ?
-                          QStringLiteral("底座正在点动") : QStringLiteral("上轴正在点动"));
+                          QStringLiteral("底座手动移动") : QStringLiteral("上轴手动移动"));
             setDetail(pulse + QStringLiteral(" · 松手停止"));
         } else if (event == QStringLiteral("stopped")) {
+            m_manualTimer.stop();
             setPersonArmed(false);
             setStatus(QStringLiteral("已停止"));
             setDetail(QStringLiteral("PA6 / PA7 均已停止"));

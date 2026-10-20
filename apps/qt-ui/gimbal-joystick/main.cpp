@@ -5,6 +5,13 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QDebug>
+#include <QFile>
+#include <QScopedPointer>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QDir>
+#include <QLocalServer>
+#include <QLocalSocket>
 
 #include "gimbalbridge.h"
 #include "cameramonitor.h"
@@ -21,6 +28,17 @@ int main(int argc, char *argv[])
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
 #endif
     QGuiApplication app(argc, argv);
+    QFile releaseFile(QCoreApplication::applicationDirPath() + QStringLiteral("/release-id.txt"));
+    QString releaseId = QStringLiteral("UNVERSIONED");
+    if (releaseFile.open(QIODevice::ReadOnly)) {
+        const QString value = QString::fromUtf8(releaseFile.read(64)).trimmed();
+        if (!value.isEmpty() && value.size() <= 48 && !value.contains('\n'))
+            releaseId = value;
+    }
+    QCoreApplication::setApplicationVersion(releaseId);
+    const bool standalonePreview = qEnvironmentVariableIntValue("GIMBAL_STANDALONE_PREVIEW") == 1;
+    qInfo() << "GIMBAL_RELEASE" << releaseId << QCoreApplication::applicationFilePath()
+            << "standalone:" << standalonePreview;
     qmlRegisterType<PreviewItem>("GimbalPreview", 1, 0, "PreviewFrame");
     GimbalBridge bridge;
     HandTracker handTracker(&bridge);
@@ -41,8 +59,13 @@ int main(int argc, char *argv[])
             personTracker.stop();
     });
     CameraMonitor cameraMonitor;
-    SystemUICommonApiClient desktopClient;
-    desktopClient.setAppName(QStringLiteral("gimbalcam"));
+    QScopedPointer<SystemUICommonApiClient> desktopClient;
+    // Direct previews have no desktop launch registration. Its watchdog would
+    // otherwise bring the desktop above the still-running preview after 2s.
+    if (!standalonePreview) {
+        desktopClient.reset(new SystemUICommonApiClient);
+        desktopClient->setAppName(QStringLiteral("gimbalcam"));
+    }
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::quit,
                      &app, &QCoreApplication::quit);
@@ -52,6 +75,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("personTracker", &personTracker);
     engine.rootContext()->setContextProperty("voiceBridge", &voiceBridge);
     engine.rootContext()->setContextProperty("trackingControl", &trackingControl);
+    engine.rootContext()->setContextProperty("appReleaseId", releaseId);
+    engine.rootContext()->setContextProperty("appIsPreview", standalonePreview);
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;
@@ -62,25 +87,71 @@ int main(int argc, char *argv[])
         QObject::connect(&handTracker, &HandTracker::previewFrame,
                          preview, &PreviewItem::setFrame);
     QQuickWindow *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QLocalServer previewWindowServer;
+    if (standalonePreview && window) {
+        const QString socketName = QStringLiteral("/tmp/gimbal-preview-window.sock");
+        QLocalServer::removeServer(socketName); // Launcher holds the exclusive UI lock.
+        previewWindowServer.setSocketOptions(QLocalServer::UserAccessOption);
+        if (!previewWindowServer.listen(socketName)) return 2;
+        QObject::connect(&previewWindowServer, &QLocalServer::newConnection, window, [&]() {
+            while (previewWindowServer.hasPendingConnections()) {
+                QLocalSocket *socket = previewWindowServer.nextPendingConnection();
+                QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+                const auto showRequest = [socket, window, releaseId]() {
+                    if (!socket->canReadLine()) return;
+                    const QByteArray command = socket->readLine(128).trimmed();
+                    if (command == QByteArray("SHOW ") + releaseId.toUtf8()) {
+                        window->showFullScreen();
+                        window->raise();
+                        window->requestActivate();
+                        socket->write(releaseId.toUtf8() + '\n');
+                    } else {
+                        socket->write("VERSION_MISMATCH\n");
+                    }
+                    socket->disconnectFromServer();
+                };
+                QObject::connect(socket, &QLocalSocket::readyRead, window, showRequest);
+                showRequest();
+            }
+        });
+    }
     if (window) {
         QObject::connect(window, &QWindow::activeChanged, window, [window]() {
             qInfo() << "gimbal window active:" << window->isActive();
         });
         // The desktop remaps above a newly launched window before sending its icon properties.
-        QObject::connect(&desktopClient, &SystemUICommonApiClient::appAppPropertyChanged,
+        if (desktopClient) QObject::connect(desktopClient.data(), &SystemUICommonApiClient::appAppPropertyChanged,
                          window, [window]() {
             QTimer::singleShot(150, window, [window]() {
                 window->requestActivate();
                 qInfo() << "gimbal window requested activation";
             });
         });
+        if (standalonePreview) {
+            QTimer::singleShot(150, window, [window]() {
+                window->showFullScreen();
+                window->raise();
+                window->requestActivate();
+            });
+            const QString probeDir = qEnvironmentVariable("GIMBAL_PREVIEW_PROBE_DIR");
+            if (!probeDir.isEmpty()) QTimer::singleShot(12000, window, [window, probeDir, releaseId]() {
+                QDir().mkpath(probeDir);
+                const QJsonObject state{{"release", releaseId}, {"visible", window->isVisible()},
+                                        {"active", window->isActive()}, {"title", window->title()}};
+                QFile file(probeDir + QStringLiteral("/window-state.json"));
+                if (file.open(QIODevice::WriteOnly)) file.write(QJsonDocument(state).toJson());
+                if (!window->grabWindow().save(probeDir + QStringLiteral("/window.png")))
+                    qWarning() << "GIMBAL_PREVIEW_SNAPSHOT_FAILED";
+                qInfo().noquote() << "GIMBAL_PREVIEW_STATE" << QJsonDocument(state).toJson(QJsonDocument::Compact);
+            });
+        }
     }
-    QObject::connect(&desktopClient, &SystemUICommonApiClient::actionCommand,
+    if (desktopClient) QObject::connect(desktopClient.data(), &SystemUICommonApiClient::actionCommand,
                      &app, [&](SystemUICommonApiClient::Command command) {
         if (command == SystemUICommonApiClient::Show) {
             if (window)
                 window->requestActivate();
-            desktopClient.askSystemUItohideOrShow(SystemUICommonApiClient::Hide);
+            desktopClient->askSystemUItohideOrShow(SystemUICommonApiClient::Hide);
         } else if (command == SystemUICommonApiClient::Quit) {
             app.quit();
         }
@@ -91,7 +162,7 @@ int main(int argc, char *argv[])
         handTracker.stop();
         personTracker.stop();
         bridge.stop();
-        desktopClient.askSystemUItohideOrShow(SystemUICommonApiClient::Show);
+        if (desktopClient) desktopClient->askSystemUItohideOrShow(SystemUICommonApiClient::Show);
     });
     QObject *cameraObject = engine.rootObjects().first()->findChild<QObject *>(QStringLiteral("camera"));
     QCamera *camera = cameraObject ? qobject_cast<QCamera *>(

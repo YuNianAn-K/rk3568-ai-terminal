@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>Main.qml</file>
+        <file>FollowGrace.qml</file>
+        <file>UnifiedVoicePanel.qml</file>
+        <file>GlassSurface.qml</file>
+        <file>GlassButton.qml</file>
+        <file>UiSymbol.qml</file>
+        <file>PersonOverlay.qml</file>
+        <file>PersonTargets.js</file>
+        <file>HeadAim.js</file>
+    </qresource>
+</RCC>

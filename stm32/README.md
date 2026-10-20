@@ -1,6 +1,26 @@
 # STM32 firmware
 
-## Current hand-tracking firmware (2026-09-30)
+## Current range update (2026-10-15)
+
+At the user's explicit request, both tracking axes now use 500–2500 us PWM.
+`TRK LIMITS?` reports `TRK_LIMITS=0500,2500,0500,2500`; the paired Qt worker
+requires this contract before accepting control. Manual holds now use the retained
+position and bounded TRK steps, without issuing CENTER on every press. After a
+firmware reset the position is still UNKNOWN and explicit initial centering is required.
+Legacy center-relative UART commands are unchanged for other callers.
+
+The 80 us target step, 24 us / 20 ms ramp, 2-second timeout and PWM-off boot remain.
+Keil ARMCC 5.06u5 built with 0 errors / 0 warnings; ST-Link download reported
+Verify OK. HEX SHA256:
+`20ca1662acbcdf6418464326f76bce172c3d639a9b77a6e66fba899fd43e3d03`.
+The installed limits and PWM-off startup were read back without motion commands.
+This is a requested electrical control range, not verified mechanical geometry;
+no endpoint movement test was performed, as requested. Earlier 600-us TILT clearance
+observations remain historical evidence and are not replaced by this readback.
+Backup, build, rollback and installation evidence:
+`local/gimbal-manual-range-20261015/REPORT.md`.
+
+## Previous hand-tracking firmware (2026-09-30)
 
 The latest UART firmware preserves the last output pulse after stopping. After a
 reset, `TRK POS?` returns `TRK_POS=UNKNOWN` and `TRK ARM` rejects movement with

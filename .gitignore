@@ -4,6 +4,16 @@
 !.env.example
 apps/voice/config/config.py
 local/
+# Private keys, encrypted local credential stores and certificate bundles
+*.key
+*.p12
+*.pfx
+*.dpapi
+# Private keys, encrypted local credential stores and certificate bundles
+*.key
+*.p12
+*.pfx
+*.dpapi
 apps/voice/vendor/
 apps/voice/vendor-wake/
 apps/voice/config/wake.enabled

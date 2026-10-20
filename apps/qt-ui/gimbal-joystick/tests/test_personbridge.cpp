@@ -40,11 +40,26 @@ int main(int argc, char **argv)
     int ended = 0;
     QObject::connect(&bridge, &GimbalBridge::trackingEnded, [&]() { ++ended; });
     check(waitFor([&]() { return bridge.connected(); }), "worker ready");
+    bridge.press(QStringLiteral("PAN_LEFT"));
+    check(waitFor([&]() { return commands().count("MANUAL PAN_LEFT ") >= 3; }),
+          "held manual input repeats without recenter");
+    bridge.stop();
+    check(waitFor([&]() { return commands().contains("STOP\n"); }), "manual release stop");
+    const int heldCount = commands().count("MANUAL ");
+    QElapsedTimer released;
+    released.start();
+    while (released.elapsed() < 450) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(10);
+    }
+    check(commands().count("MANUAL ") == heldCount, "no heartbeat after release");
+    check(!commands().contains("CENTER"), "manual press never recenters");
+    const QByteArray manualCommands = commands();
     QElapsedTimer clock;
     clock.start();
     auto stamp = [&]() { return clock.msecsSinceReference(); };
     bridge.personSample(.2, .3, .72, stamp(), stamp());
-    check(commands().isEmpty(), "samples without explicit start ignored");
+    check(commands() == manualCommands, "samples without explicit start ignored");
     bridge.personStart();
     check(waitFor([&]() { return bridge.status().contains(QStringLiteral("确认选中目标")); }), "person status");
     const qint64 now = stamp();

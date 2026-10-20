@@ -10,7 +10,7 @@ target = {"PAN": 1500, "TILT": 1500}
 
 def exchange(_fd, command):
     axis = "PAN" if command[4] == "P" else "TILT"
-    low, high = (500, 2500) if axis == "PAN" else (750, 2250)
+    low, high = 500, 2500
     target[axis] = max(low, min(high, target[axis] + (80 if command.endswith("+") else -80)))
     return "TRK_%s=%dUS" % (axis, target[axis])
 

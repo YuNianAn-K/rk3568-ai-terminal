@@ -1,0 +1,25 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ECS 流量与费用</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main><header><span>RK3568 云端 · 深圳</span><span id="month">—</span></header>
+<h1>ECS 流量与费用</h1><p class="sub">公网入站 / 出站 · 只读监控</p>
+<div id="status" class="status">正在连接本机监控…</div>
+<section class="hero"><div class="label">本月出站 · 已观测估算</div><div class="big"><span id="used">—</span><small> GB</small></div>
+<progress id="bar" max="20" value="0"></progress><div class="row"><span>账号内地免费额度 20GB/月</span><span id="level">尚未获取实时数据</span></div>
+<p id="coverage" class="note">不将缺失数据视为零，不保证额度未超。</p></section>
+<section class="grid"><article><div class="label">公网入站速度</div><strong id="in">—</strong><p>入站不计流量费</p></article>
+<article><div class="label">公网出站速度</div><strong id="out">—</strong><p>云监控分钟级数据</p></article>
+<article><div class="label">今日入站 / 出站估算</div><strong id="today">—</strong><p>仅累计已收到的监控样本</p></article>
+<article><div class="label">CDT 已出账应付</div><strong id="bill">—</strong><p id="bill-note">未查询不代表费用为零</p></article></section>
+<div class="notice"><b>流量保护：未启用</b><p>10 / 15 / 18GB 分级提示。20GB是免费额度，并非自动断网开关；关闭此窗口后不继续监控。</p></div>
+<details id="history"><summary>上次控制台核验记录（非实时）</summary><p id="observation">没有本月记录</p></details>
+<div class="actions"><button id="refresh">刷新显示</button><a href="https://cdt.console.aliyun.com" target="_blank" rel="noreferrer">CDT 控制台 ↗</a><button id="credentials" class="secondary">接入只读凭据</button><button id="forget" class="text" hidden>忘记本机凭据并断开</button></div>
+<p id="credential-status" class="note">尚未保存凭据；可选择加密记住，下次自动连接。</p>
+<details><summary>接入说明与权限范围</summary><p>需要专用RAM只读身份，允许查询云监控与CDT账单。不要使用主账号密钥。选择保存后，凭据由Windows当前用户加密保存在本机，下次启动自动连接；不存浏览器或明文配置。可随时忘记。临时STS令牌仅支持本次连接。</p><p>监控每60秒查询，账单每15分钟查询并约延迟24小时。额度为账号共享，本面板仅估算这台ECS，不代表其他资源的流量。</p></details>
+<footer><span id="updated">尚未更新</span><button id="stop" class="text">停止并退出</button></footer>
+<dialog id="connect"><form id="connect-form"><h2>连接阿里云只读身份</h2><p>只使用专用RAM凭据，可选填临时STS令牌；请勿粘贴主账号密钥。</p>
+<label>AccessKey ID<input id="access-id" type="password" autocomplete="off" required></label>
+<label>AccessKey Secret<input id="secret" type="password" autocomplete="off" required></label>
+<label>STS SecurityToken（可选）<input id="token" type="password" autocomplete="off"></label>
+<p id="save-note" class="note">保存后仅当前Windows用户可解锁；以后双击桌面入口即可自动连接。</p>
+<div class="actions"><button type="submit" id="save-connect">加密保存并连接</button><button type="submit" id="once-connect" class="secondary">仅本次连接</button><button type="button" id="cancel" class="text">取消</button></div><p id="connect-error" role="alert"></p></form></dialog>
+</main></body></html>

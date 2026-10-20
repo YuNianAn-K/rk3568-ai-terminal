@@ -48,6 +48,8 @@ def firmware():
                     str(position[axis]) + "US" if active[axis] else "OFF")
             elif command == "TRK?":
                 reply = "TRK=ARMED" if armed else "TRK=OFF"
+            elif command == "TRK LIMITS?":
+                reply = "TRK_LIMITS=0500,2500,0500,2500"
             elif command == "TRK POS?":
                 reply = "TRK_POS=UNKNOWN" if position is None else (
                     "TRK_POS=%04d,%04d" % tuple(position))
@@ -69,7 +71,7 @@ def firmware():
                 if not active[axis]:
                     outputs.append((axis, position[axis]))
                 active[axis] = True
-                low, high = (500, 2500) if axis == 0 else (750, 2250)
+                low, high = 500, 2500
                 targets[axis] = max(low, min(high, targets[axis] + (
                     80 if command.endswith("+") else -80)))
                 position[axis] = targets[axis]
